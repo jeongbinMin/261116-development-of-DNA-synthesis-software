@@ -304,42 +304,61 @@ class SynthesisTab:
         frame = ttk.LabelFrame(parent, text="Fluidic Path", padding=10)
         frame.pack(side="left", fill="both", expand=True, padx=(5, 0))
 
+        # 펌프가 많아지면(최대 12개) 가로로 한 줄에 다 못 들어가므로,
+        # 한 줄에 최대 6개까지만 놓고 나머지는 아래 줄로 내려 폭을 줄인다.
         pump_names = list(cfg.PUMPS.keys())
-        n = len(pump_names)
+        row_cap = 6
+        top_pumps = pump_names[:row_cap]
+        bottom_pumps = pump_names[row_cap:]
+        columns = max(len(top_pumps), len(bottom_pumps), 1)
+
         pump_w, gap = 42, 14
-        canvas_w = max(560, 30 + n * (pump_w + gap) + 220)
-        canvas_h = 260
+        grid_left = 30
+        canvas_w = grid_left + columns * (pump_w + gap) + 220
+        top_y0, top_y1 = 20, 85          # 위쪽 줄 펌프 박스
+        bus_y = 160                       # 공용 버스 라인 (위/아래 줄 사이)
+        bot_y0, bot_y1 = bus_y + 55, bus_y + 120  # 아래쪽 줄 펌프 박스
+        canvas_h = bot_y1 + 30 if bottom_pumps else bus_y + 100
+
         self.fluidic_canvas = tk.Canvas(frame, width=canvas_w, height=canvas_h,
                                          bg="white", highlightthickness=0)
         self.fluidic_canvas.pack()
 
-        pump_top, pump_bot = 20, 95
-        bus_y = 150
-        rv_x, rv_y, rv_r = 30 + n * (pump_w + gap) + 30, bus_y, 32
+        rv_x = grid_left + columns * (pump_w + gap) + 30
+        rv_y, rv_r = bus_y, 32
 
-        self.pump_nodes = {}      # name -> (rect_id, fill_id)
+        self.pump_nodes = {}      # name -> fill_id
         self.pump_lines = {}      # name -> vertical connector line id
 
-        for i, name in enumerate(pump_names):
-            x0 = 30 + i * (pump_w + gap)
-            x1 = x0 + pump_w
+        def draw_pump(name, x0, x1, box_y0, box_y1, label_y, connect_to_bus):
             self.fluidic_canvas.create_rectangle(
-                x0, pump_top, x1, pump_bot, outline="#1a1a1a", width=2
+                x0, box_y0, x1, box_y1, outline="#1a1a1a", width=2
             )
             fill_id = self.fluidic_canvas.create_rectangle(
-                x0 + 8, pump_top + 15, x1 - 8, pump_bot - 10,
+                x0 + 8, box_y0 + 8, x1 - 8, box_y1 - 8,
                 fill=VALVE_IDLE_COLOR, outline=""
             )
             self.fluidic_canvas.create_text(
-                (x0 + x1) / 2, pump_bot + 14, text=name, font=("Segoe UI", 8)
+                (x0 + x1) / 2, label_y, text=name, font=("Segoe UI", 8)
             )
+            cx = (x0 + x1) / 2
             line_id = self.fluidic_canvas.create_line(
-                (x0 + x1) / 2, pump_bot, (x0 + x1) / 2, bus_y, fill="#9aa5b1", width=3
+                cx, connect_to_bus[0], cx, connect_to_bus[1], fill="#9aa5b1", width=3
             )
             self.pump_nodes[name] = fill_id
             self.pump_lines[name] = line_id
 
-        bus_x0 = 30 + pump_w / 2
+        for i, name in enumerate(top_pumps):
+            x0 = grid_left + i * (pump_w + gap)
+            x1 = x0 + pump_w
+            draw_pump(name, x0, x1, top_y0, top_y1, top_y1 + 14, (top_y1, bus_y))
+
+        for i, name in enumerate(bottom_pumps):
+            x0 = grid_left + i * (pump_w + gap)
+            x1 = x0 + pump_w
+            draw_pump(name, x0, x1, bot_y0, bot_y1, bot_y0 - 10, (bot_y0, bus_y))
+
+        bus_x0 = grid_left + pump_w / 2
         self.bus_line = self.fluidic_canvas.create_line(
             bus_x0, bus_y, rv_x - rv_r, bus_y, fill="#9aa5b1", width=3
         )
