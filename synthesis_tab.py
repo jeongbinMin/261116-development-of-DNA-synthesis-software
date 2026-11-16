@@ -65,6 +65,15 @@ STAGE_LABELS = {
     "a": "Couple", "t": "Couple", "g": "Couple", "c": "Couple",
 }
 
+# Function 이름(devices_config.py의 키) -> Fluidic Path에 표시할 읽기 쉬운 이름.
+# 내부 로직(valve_ports 매핑, pump 조회 등)은 전부 Function 이름 그대로 쓰고,
+# 화면 표시만 이 이름으로 바꿔치기 - 둘이 꼬이면 안 되므로 Function 이름은 유지.
+FUNCTION_DISPLAY_NAMES = {
+    "wsh": "Wash", "wsha": "Wash 2", "dblk": "Deblock", "ox": "Oxidize",
+    "aux": "Aux", "dmt": "DMT", "a": "A", "t": "T", "g": "G", "c": "C",
+    "act": "Activate", "gas": "Gas",
+}
+
 
 def step_stage_label(step) -> str:
     """카드에 표시할 짧은 단계 이름. 하드코딩된 화학 순서가 아니라 실제 Step에서 추출."""
@@ -417,46 +426,40 @@ class SynthesisTab:
         """RV(12-port 밸브)는 포트마다 독립된 라인을 갖고, 그 중 하나가 선택되면
         안에서 공용 출구 하나로 합쳐져 Flow Cell로 나간다 (실제 로터리밸브 구조).
         그래서 펌프->RV 구간은 포트별로 완전히 분리된 선으로 그리고, RV->Flow Cell
-        구간만 공용선 하나로 그린다 (이전처럼 펌프들을 미리 한 선으로 합치지 않음).
+        구간만 공용선 하나로 그린다.
 
-        각 펌프 선을 RV 포트 번호 그대로에 연결하면(예: act=11번) 화면상 줄(위/아래)과
-        실제 포트 번호 순서가 안 맞아 선끼리 꼬이는 문제가 있었음. 그래서 포트 "번호"는
-        라벨에만 정확히 쓰고, 선의 경로는 화면에 그려진 순서(왼쪽->오른쪽, RV에 가까운
-        펌프일수록 짧게)에 맞춰 각자 다른 높이의 레인(lane)을 거쳐 RV 쪽으로 가도록
-        배치함 - 이렇게 하면 수학적으로 선끼리 교차하지 않는다(버스 라우팅에서 쓰는 방식)."""
+        참고 목업처럼 시약들을 세로 한 줄 리스트로 배치함. 전부 같은 x좌표(한 줄)에
+        위에서 아래로 늘어서 있고, RV 포트 위치도 위(90도)에서 아래(270도)까지
+        같은 순서로 배치하기 때문에, 선들이 수학적으로 교차할 수가 없음(두 점
+        수열을 같은 순서로 이으면 교차하지 않는다는 원리 - 이전의 2줄 배치보다
+        훨씬 단순하고 확실함)."""
         frame = ttk.LabelFrame(parent, text="Fluidic Path", padding=10)
         frame.pack(side="left", fill="both", expand=True, padx=(5, 0))
 
         pump_names = list(cfg.PUMPS.keys())
         n = len(pump_names)
-        top_count = (n + 1) // 2
-        top_pumps = pump_names[:top_count]
-        bottom_pumps = pump_names[top_count:]
-        columns = max(len(top_pumps), len(bottom_pumps), 1)
         port_to_name = {port: name for name, port in cfg.VALVE_PORTS.items()}
 
-        pump_w, gap = 42, 14
-        grid_left = 30
-        top_y0, top_y1 = 35, 95
-        row_margin = 85                       # 박스 끝에서 RV 중심까지의 거리 (위/아래 대칭)
-        bus_y = top_y1 + row_margin           # RV를 위/아래 줄 정중앙에 배치
-        bot_y0, bot_y1 = bus_y + row_margin, bus_y + row_margin + 60
+        row_h, row_gap = 30, 10
+        list_x0, list_x1 = 20, 110
+        list_top = 20
+        list_bottom = list_top + n * row_h + (n - 1) * row_gap
 
-        rv_x = grid_left + columns * (pump_w + gap) + 90
+        rv_x = list_x1 + 140
         rv_r = 55
+        rv_y = (list_top + list_bottom) / 2   # RV를 리스트 세로 한가운데에 배치
         fc_x0 = rv_x + rv_r + 70
         fc_x1 = fc_x0 + 110
         waste_x0 = fc_x1 + 50
         waste_x1 = waste_x0 + 90
 
         canvas_w = waste_x1 + 20
-        canvas_h = (bot_y1 + 30) if bottom_pumps else (bus_y + 100)
+        canvas_h = max(list_bottom, rv_y + 95) + 20   # rv_y+95 = Waste 박스 아래쪽 끝
 
         self.fluidic_canvas = tk.Canvas(frame, width=canvas_w, height=canvas_h,
                                          bg="white", highlightthickness=0)
         self.fluidic_canvas.pack()
 
-        rv_y = bus_y
         self._rv_center = (rv_x, rv_y)
 
         def rv_point(angle_deg):
@@ -468,50 +471,35 @@ class SynthesisTab:
         self.pump_paths = {}      # name -> 흐름 애니메이션용 경로 좌표 리스트
         self.port_points = {}     # port number -> RV 둘레 좌표 (펌프 유무 무관, needle에 사용)
 
-        lane_pitch = 10
+        for i, name in enumerate(pump_names):
+            y0 = list_top + i * (row_h + row_gap)
+            y1 = y0 + row_h
+            cy = (y0 + y1) / 2
+            self.fluidic_canvas.create_rectangle(list_x0, y0, list_x1, y1,
+                                                  outline="#1a1a1a", width=2)
+            fill_id = self.fluidic_canvas.create_rectangle(
+                list_x0 + 3, y0 + 3, list_x1 - 3, y1 - 3,
+                fill=VALVE_IDLE_COLOR, outline=""
+            )
+            self.fluidic_canvas.create_text(
+                (list_x0 + list_x1) / 2, cy,
+                text=FUNCTION_DISPLAY_NAMES.get(name, name), font=("Segoe UI", 9, "bold")
+            )
 
-        def draw_pump_row(names, box_y0, box_y1, label_y, lane_base_y, lane_toward_rv,
-                           angle_base, angle_span):
-            count = len(names)
-            for i, name in enumerate(names):
-                x0 = grid_left + i * (pump_w + gap)
-                x1 = x0 + pump_w
-                cx = (x0 + x1) / 2
-                self.fluidic_canvas.create_rectangle(x0, box_y0, x1, box_y1,
-                                                      outline="#1a1a1a", width=2)
-                fill_id = self.fluidic_canvas.create_rectangle(
-                    x0 + 8, box_y0 + 8, x1 - 8, box_y1 - 8,
-                    fill=VALVE_IDLE_COLOR, outline=""
-                )
-                self.fluidic_canvas.create_text(cx, label_y, text=name, font=("Segoe UI", 8))
+            # 리스트 순서(위->아래)와 같은 순서로, RV 왼쪽 반원을 따라(90도->180도->270도)
+            # 배치 - 90도(정위)에서 270도(정아래)까지 왼쪽(180도)을 거쳐가야
+            # 리스트가 있는 왼쪽을 향하게 되고, 선끼리도 교차하지 않음
+            angle = 90 + 180 * (i / (n - 1) if n > 1 else 0.5)
+            px, py = rv_point(angle)
+            path = [(list_x1, cy), (px, py)]
+            line_id = self.fluidic_canvas.create_line(
+                *[c for pt in path for c in pt], fill="#9aa5b1", width=2
+            )
 
-                # RV에서 먼 펌프(왼쪽)일수록 깊은 레인(버스 라인에 가까운 레인)을 쓰고,
-                # RV에 가까운 펌프(오른쪽)일수록 얕은 레인(박스에 가까운 레인)을 써서
-                # 레인끼리도, 레인->포트로 가는 마지막 구간끼리도 교차하지 않게 함.
-                rank = count - 1 - i
-                lane_y = lane_base_y + lane_toward_rv * (8 + rank * lane_pitch)
-                angle = angle_base + angle_span * (rank / (count - 1) if count > 1 else 0.5)
-                px, py = rv_point(angle)
-
-                box_edge_y = box_y1 if lane_toward_rv > 0 else box_y0
-                path = [(cx, box_edge_y), (cx, lane_y), (rv_x - rv_r - 10, lane_y), (px, py)]
-                line_id = self.fluidic_canvas.create_line(
-                    *[c for pt in path for c in pt], fill="#9aa5b1", width=2
-                )
-
-                self.pump_nodes[name] = fill_id
-                self.pump_lines[name] = line_id
-                self.pump_paths[name] = path
-                self.port_points[cfg.VALVE_PORTS[name]] = (px, py)
-
-        # 위쪽 줄: RV 위쪽 사분원(90°=정상단 ~ 180°=정왼쪽) 사용
-        draw_pump_row(top_pumps, top_y0, top_y1, top_y0 - 12,
-                      lane_base_y=top_y1, lane_toward_rv=1,
-                      angle_base=90, angle_span=90)
-        # 아래쪽 줄: RV 아래쪽 사분원(270°=정하단 ~ 180°=정왼쪽) 사용
-        draw_pump_row(bottom_pumps, bot_y0, bot_y1, bot_y1 + 14,
-                      lane_base_y=bot_y0, lane_toward_rv=-1,
-                      angle_base=270, angle_span=-90)
+            self.pump_nodes[name] = fill_id
+            self.pump_lines[name] = line_id
+            self.pump_paths[name] = path
+            self.port_points[cfg.VALVE_PORTS[name]] = (px, py)
 
         # RV 몸체: 참고 이미지 스타일 - 바깥 링에 12개 눈금, 안쪽에 "12 PORT" 표시,
         # 중앙에서 현재 선택된 포트 쪽으로 바늘(needle)이 가리키도록 함
@@ -542,19 +530,19 @@ class SynthesisTab:
             rv_x, rv_y, rv_x, rv_y, fill="#1a1a1a", width=3
         )
 
-        fc_y0, fc_y1 = bus_y - 35, bus_y + 35
-        self.common_flow_path = [(rv_x + rv_r, bus_y), (fc_x0, bus_y)]
+        fc_y0, fc_y1 = rv_y - 35, rv_y + 35
+        self.common_flow_path = [(rv_x + rv_r, rv_y), (fc_x0, rv_y)]
         self.rv_to_fc_line = self.fluidic_canvas.create_line(
-            rv_x + rv_r, bus_y, fc_x0, bus_y, fill="#9aa5b1", width=3
+            rv_x + rv_r, rv_y, fc_x0, rv_y, fill="#9aa5b1", width=3
         )
         self.fluidic_canvas.create_rectangle(fc_x0, fc_y0, fc_x1, fc_y1,
                                               outline="#1a1a1a", width=2)
-        self.fluidic_canvas.create_text((fc_x0 + fc_x1) / 2, bus_y,
+        self.fluidic_canvas.create_text((fc_x0 + fc_x1) / 2, rv_y,
                                          text="FLOW\nCELL", font=("Segoe UI", 11, "bold"))
 
-        waste_y0, waste_y1 = bus_y + 50, bus_y + 95
+        waste_y0, waste_y1 = rv_y + 50, rv_y + 95
         self.fc_to_waste_line = self.fluidic_canvas.create_line(
-            fc_x1, bus_y, waste_x0 + 45, bus_y, waste_x0 + 45, waste_y0,
+            fc_x1, rv_y, waste_x0 + 45, rv_y, waste_x0 + 45, waste_y0,
             fill="#9aa5b1", width=3
         )
         self.fluidic_canvas.create_rectangle(waste_x0, waste_y0, waste_x1, waste_y1,
@@ -595,8 +583,9 @@ class SynthesisTab:
             )
 
         port = cfg.VALVE_PORTS.get(function_name)
+        display_name = FUNCTION_DISPLAY_NAMES.get(function_name, function_name)
         self.reagent_label.configure(
-            text=f"Commanded Reagent: {function_name} (port {port if port is not None else '?'})"
+            text=f"Commanded Reagent: {display_name} (port {port if port is not None else '?'})"
         )
 
         # 바늘(needle)을 현재 선택된 포트 쪽으로 회전 - 멈춘 뒤에도 그대로 유지되어
