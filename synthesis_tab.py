@@ -44,20 +44,23 @@ class ReagentCheckDialog(tk.Toplevel):
         self.grab_set()  # modal
 
         self.on_confirm = on_confirm
+        self.totals = totals
+        self.unit_is_ml = False  # 클릭할 때마다 uL <-> mL 전환
 
         ttk.Label(self, text="Required volume per reagent for this recipe:",
                   background=BG_COLOR).pack(anchor="w", padx=15, pady=(15, 5))
+        ttk.Label(self, text="(click the volume column header to switch uL / mL)",
+                  background=BG_COLOR, foreground="#666666").pack(anchor="w", padx=15)
 
         tree_frame = ttk.Frame(self)
-        tree_frame.pack(fill="both", expand=True, padx=15)
-        tree = ttk.Treeview(tree_frame, columns=("reagent", "volume"), show="headings", height=10)
-        tree.heading("reagent", text="Reagent (Function)")
-        tree.heading("volume", text="Required Volume (uL)")
-        tree.column("reagent", width=200, anchor="center")
-        tree.column("volume", width=180, anchor="center")
-        for name, total in sorted(totals.items()):
-            tree.insert("", "end", values=(name, f"{total:.1f}"))
-        tree.pack(fill="both", expand=True)
+        tree_frame.pack(fill="both", expand=True, padx=15, pady=(5, 0))
+        self.tree = ttk.Treeview(tree_frame, columns=("reagent", "volume"), show="headings", height=10)
+        self.tree.heading("reagent", text="Reagent (Function)")
+        self.tree.column("reagent", width=200, anchor="center")
+        self.tree.column("volume", width=180, anchor="center")
+        self.tree.heading("volume", command=self._toggle_unit)
+        self.tree.pack(fill="both", expand=True)
+        self._render_rows()
 
         if not totals:
             ttk.Label(self, text="(No fluid steps in this recipe.)",
@@ -75,6 +78,19 @@ class ReagentCheckDialog(tk.Toplevel):
                                           command=self._on_confirm_clicked, state="disabled")
         self.confirm_button.pack(side="left")
         ttk.Button(btn_row, text="Cancel", command=self.destroy).pack(side="left", padx=5)
+
+    def _render_rows(self):
+        unit = "mL" if self.unit_is_ml else "uL"
+        self.tree.heading("volume", text=f"Required Volume ({unit})")
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for name, total_ul in sorted(self.totals.items()):
+            value = total_ul / 1000 if self.unit_is_ml else total_ul
+            self.tree.insert("", "end", values=(name, f"{value:.3f}" if self.unit_is_ml else f"{value:.1f}"))
+
+    def _toggle_unit(self):
+        self.unit_is_ml = not self.unit_is_ml
+        self._render_rows()
 
     def _on_check_toggle(self):
         self.confirm_button.configure(state="normal" if self.confirm_var.get() else "disabled")
