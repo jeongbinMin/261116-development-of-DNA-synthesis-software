@@ -7,6 +7,7 @@ own window. Reports status changes (running/idle/etc.) back to the header
 badges via callbacks.
 """
 
+import math
 import os
 import queue
 import threading
@@ -207,15 +208,25 @@ class SynthesisTab:
                         variable=self.simulate_var, command=self._on_simulate_change
                         ).grid(row=0, column=3, padx=20, sticky="w")
 
+        # 입력 영역(왼쪽, 폭을 줄임) + 진행률 링(오른쪽)을 한 줄에 같이 배치해서
+        # 세로 공간을 너무 많이 차지하지 않도록 함
+        input_row = ttk.Frame(self.parent, padding=10)
+        input_row.pack(fill="x")
+
+        input_left = ttk.Frame(input_row)
+        input_left.pack(side="left", fill="both", expand=True)
+
+        self._build_progress_ring(input_row)
+
         # Column synthesis inputs
-        self.column_frame = ttk.LabelFrame(self.parent, text="Column Synthesis Input", padding=10)
+        self.column_frame = ttk.LabelFrame(input_left, text="Column Synthesis Input", padding=10)
         self.seq_path_var = tk.StringVar()
         self.col_protocol_dir_var = tk.StringVar()
         self._file_row(self.column_frame, "Sequence File:", self.seq_path_var, is_dir=False)
         self._file_row(self.column_frame, "Per-base Protocol Folder:", self.col_protocol_dir_var, is_dir=True)
 
         # DMD array synthesis inputs
-        self.dmd_frame = ttk.LabelFrame(self.parent, text="DMD Array Synthesis Input", padding=10)
+        self.dmd_frame = ttk.LabelFrame(input_left, text="DMD Array Synthesis Input", padding=10)
         self.seqlist_path_var = tk.StringVar()
         self.dmd_protocol_dir_var = tk.StringVar()
         self._file_row(self.dmd_frame, "Sequence List File:", self.seqlist_path_var, is_dir=False)
@@ -253,9 +264,6 @@ class SynthesisTab:
         self.stop_button.pack(side="left", padx=5)
         self.progress_label = ttk.Label(run_frame, text="Idle")
         self.progress_label.pack(side="left", padx=20)
-
-        # Overall progress ring (%) + current stage, right below it
-        self._build_progress_ring(self.parent)
 
         # 02/03: Progress info cards (left) + Fluidic Path diagram (right)
         middle = ttk.Frame(self.parent, padding=10)
@@ -357,11 +365,12 @@ class SynthesisTab:
 
     def _build_progress_ring(self, parent):
         """원형 진행률(%) 표시 + 그 아래 현재 단계/사이클 텍스트.
-        카드 그리드 방식은 너무 요란해 보여서, 작은 텍스트 한 줄로 단순화."""
-        frame = ttk.Frame(parent, padding=(10, 0, 10, 10))
-        frame.pack()
+        카드 그리드 방식은 너무 요란해 보여서, 작은 텍스트 한 줄로 단순화.
+        세로 공간을 아끼기 위해 입력 영역 오른쪽에 작게 붙여서 배치."""
+        frame = ttk.Frame(parent, padding=(10, 0, 0, 0))
+        frame.pack(side="right")
 
-        ring_size, ring_width = 130, 14
+        ring_size, ring_width = 90, 10
         pad = ring_width / 2 + 2
         self.ring_canvas = tk.Canvas(frame, width=ring_size, height=ring_size,
                                       bg=BG_COLOR, highlightthickness=0)
@@ -379,11 +388,11 @@ class SynthesisTab:
             outline="#333333", width=ring_width
         )
         self.ring_text_id = self.ring_canvas.create_text(
-            ring_size / 2, ring_size / 2, text="0%", font=("Segoe UI", 18, "bold")
+            ring_size / 2, ring_size / 2, text="0%", font=("Segoe UI", 13, "bold")
         )
 
         self.stage_var = tk.StringVar(value="Stage: Idle")
-        ttk.Label(frame, textvariable=self.stage_var, font=("Segoe UI", 10)).pack(pady=(6, 0))
+        ttk.Label(frame, textvariable=self.stage_var, font=("Segoe UI", 9)).pack(pady=(4, 0))
 
         self.cycle_template_len = 0
         self.cycle_total_cycles = 1
@@ -398,28 +407,29 @@ class SynthesisTab:
         self.stage_var.set(text)
 
     def _build_fluidic_path(self, parent):
+        """RV(12-port 밸브)는 포트마다 독립된 라인을 갖고, 그 중 하나가 선택되면
+        안에서 공용 출구 하나로 합쳐져 Flow Cell로 나간다 (실제 로터리밸브 구조).
+        그래서 펌프->RV 구간은 포트별로 완전히 분리된 선으로 그리고, RV->Flow Cell
+        구간만 공용선 하나로 그린다 (이전처럼 펌프들을 미리 한 선으로 합치지 않음)."""
         frame = ttk.LabelFrame(parent, text="Fluidic Path", padding=10)
         frame.pack(side="left", fill="both", expand=True, padx=(5, 0))
 
-        # 펌프가 많아지면(최대 12개) 가로로 한 줄에 다 못 들어가므로 2줄로 나눈다.
-        # 6/2 처럼 한쪽으로 쏠리지 않게, 항상 절반씩 나눠서 균형 있게 배치.
         pump_names = list(cfg.PUMPS.keys())
         n = len(pump_names)
         top_count = (n + 1) // 2
         top_pumps = pump_names[:top_count]
         bottom_pumps = pump_names[top_count:]
         columns = max(len(top_pumps), len(bottom_pumps), 1)
+        port_to_name = {port: name for name, port in cfg.VALVE_PORTS.items()}
 
         pump_w, gap = 42, 14
         grid_left = 30
-        top_y0, top_y1 = 35, 95           # 위쪽 줄 펌프 박스 (라벨은 이 위에 표시)
-        bus_y = 165                        # 공용 버스 라인 (위/아래 줄 사이)
-        bot_y0, bot_y1 = bus_y + 65, bus_y + 125  # 아래쪽 줄 펌프 박스 (라벨은 이 아래 표시)
+        top_y0, top_y1 = 35, 95
+        bus_y = 180
+        bot_y0, bot_y1 = bus_y + 80, bus_y + 140
 
-        # RV/FlowCell/Waste까지 포함한 실제 필요 폭을 먼저 계산 (이전엔 이 부분이
-        # 과소평가되어 있어서 Flow Cell/Waste가 캔버스 밖으로 잘렸었음)
-        rv_x = grid_left + columns * (pump_w + gap) + 30
-        rv_r = 32
+        rv_x = grid_left + columns * (pump_w + gap) + 70
+        rv_r = 60
         fc_x0 = rv_x + rv_r + 70
         fc_x1 = fc_x0 + 110
         waste_x0 = fc_x1 + 50
@@ -434,10 +444,18 @@ class SynthesisTab:
 
         rv_y = bus_y
 
-        self.pump_nodes = {}      # name -> fill_id
-        self.pump_lines = {}      # name -> vertical connector line id
+        # 12개 포트를 RV 왼쪽 반원(펌프들을 바라보는 쪽)에 고르게 배치.
+        # 오른쪽 반원은 Flow Cell로 나가는 공용 출구 전용으로 비워둠.
+        def port_point(port_number):
+            angle_deg = 90 + (port_number - 1) * (180 / 11)
+            angle = math.radians(angle_deg)
+            return rv_x + rv_r * math.cos(angle), rv_y - rv_r * math.sin(angle)
 
-        def draw_pump(name, x0, x1, box_y0, box_y1, label_y, connect_to_bus):
+        self.pump_nodes = {}      # name -> fill_id
+        self.pump_lines = {}      # name -> 연결선 캔버스 id (디버깅/참조용)
+        self.pump_paths = {}
+
+        def draw_pump(name, x0, x1, box_y0, box_y1, label_y, stub_y):
             self.fluidic_canvas.create_rectangle(
                 x0, box_y0, x1, box_y1, outline="#1a1a1a", width=2
             )
@@ -446,42 +464,47 @@ class SynthesisTab:
                 fill=VALVE_IDLE_COLOR, outline=""
             )
             cx = (x0 + x1) / 2
-            # 연결선을 먼저 그리고 그 위에 라벨 텍스트를 그려서, 라벨이 항상
-            # 선보다 위(연결선과 안 겹치는 바깥쪽)에 보이도록 함
+            port_number = cfg.VALVE_PORTS.get(name)
+            px, py = port_point(port_number) if port_number else (rv_x - rv_r, rv_y)
+            path = [(cx, stub_y[0]), (cx, stub_y[1]), (px, py)]
             line_id = self.fluidic_canvas.create_line(
-                cx, connect_to_bus[0], cx, connect_to_bus[1], fill="#9aa5b1", width=3
+                *[c for pt in path for c in pt], fill="#9aa5b1", width=2
             )
-            self.fluidic_canvas.create_text(
-                cx, label_y, text=name, font=("Segoe UI", 8)
-            )
+            self.fluidic_canvas.create_text(cx, label_y, text=name, font=("Segoe UI", 8))
             self.pump_nodes[name] = fill_id
             self.pump_lines[name] = line_id
+            self.pump_paths[name] = path
 
         for i, name in enumerate(top_pumps):
             x0 = grid_left + i * (pump_w + gap)
             x1 = x0 + pump_w
-            # 위쪽 줄: 연결선은 박스 아래(top_y1)에서 버스 라인까지, 라벨은 박스 위쪽에
-            draw_pump(name, x0, x1, top_y0, top_y1, top_y0 - 12, (top_y1, bus_y))
+            draw_pump(name, x0, x1, top_y0, top_y1, top_y0 - 12, (top_y1, bus_y - 40))
 
         for i, name in enumerate(bottom_pumps):
             x0 = grid_left + i * (pump_w + gap)
             x1 = x0 + pump_w
-            # 아래쪽 줄: 연결선은 박스 위(bot_y0)에서 버스 라인까지, 라벨은 박스 아래쪽에
-            draw_pump(name, x0, x1, bot_y0, bot_y1, bot_y1 + 14, (bot_y0, bus_y))
+            draw_pump(name, x0, x1, bot_y0, bot_y1, bot_y1 + 14, (bot_y0, bus_y + 40))
 
-        bus_x0 = grid_left + pump_w / 2
-        self.bus_line = self.fluidic_canvas.create_line(
-            bus_x0, bus_y, rv_x - rv_r, bus_y, fill="#9aa5b1", width=3
-        )
-
+        # RV 몸체 + 12개 포트 눈금 (펌프가 없는 포트도 밸브에 실제로 존재하므로 표시)
         self.fluidic_canvas.create_oval(
             rv_x - rv_r, rv_y - rv_r, rv_x + rv_r, rv_y + rv_r,
             fill="#e6e6e6", outline="#1a1a1a", width=2
         )
-        self.fluidic_canvas.create_text(rv_x, rv_y, text="RV", font=("Segoe UI", 12, "bold"))
+        for port_number in range(1, 13):
+            px, py = port_point(port_number)
+            name = port_to_name.get(port_number, "")
+            has_pump = name in cfg.PUMPS
+            tick_x = rv_x + (rv_r - 7) * (px - rv_x) / rv_r if rv_r else px
+            tick_y = rv_y + (rv_r - 7) * (py - rv_y) / rv_r if rv_r else py
+            self.fluidic_canvas.create_line(
+                tick_x, tick_y, px, py,
+                fill="#1a1a1a" if has_pump else "#bfbfbf", width=2
+            )
+        self.fluidic_canvas.create_text(rv_x, rv_y, text="RV", font=("Segoe UI", 13, "bold"))
         self.fluidic_canvas.create_text(rv_x, rv_y + rv_r + 14, text="12-port", font=("Segoe UI", 8))
 
         fc_y0, fc_y1 = bus_y - 35, bus_y + 35
+        self.common_flow_path = [(rv_x + rv_r, bus_y), (fc_x0, bus_y)]
         self.rv_to_fc_line = self.fluidic_canvas.create_line(
             rv_x + rv_r, bus_y, fc_x0, bus_y, fill="#9aa5b1", width=3
         )
@@ -500,47 +523,76 @@ class SynthesisTab:
         self.fluidic_canvas.create_text((waste_x0 + waste_x1) / 2, (waste_y0 + waste_y1) / 2,
                                          text="WASTE", font=("Segoe UI", 9))
 
-        self.flow_lines = [self.rv_to_fc_line]  # 애니메이션(점선) 대상 선들
-        self.active_pump_line = None
+        self.flow_dots = []
         self.flow_animating = False
         self.reagent_label = ttk.Label(frame, text="Commanded Reagent: none")
         self.reagent_label.pack(anchor="w", pady=(5, 0))
 
+    @staticmethod
+    def _point_on_path(path, t):
+        """path(점 리스트)를 따라 0~1 사이 비율 t에 해당하는 좌표를 보간.
+        여러 선분으로 이루어진 경로(꺾인 선)를 하나의 흐름으로 따라가기 위함."""
+        seg_lengths = [
+            math.dist(path[i], path[i + 1]) for i in range(len(path) - 1)
+        ]
+        total = sum(seg_lengths) or 1.0
+        target = t * total
+        acc = 0.0
+        for i, seg_len in enumerate(seg_lengths):
+            if acc + seg_len >= target or i == len(seg_lengths) - 1:
+                local_t = 0 if seg_len == 0 else (target - acc) / seg_len
+                x0, y0 = path[i]
+                x1, y1 = path[i + 1]
+                return x0 + (x1 - x0) * local_t, y0 + (y1 - y0) * local_t
+            acc += seg_len
+        return path[-1]
+
     def _start_flow_animation(self, function_name):
+        """점선 오프셋(marching ants) 대신, 경로를 따라 실제로 움직이는 작은 점으로
+        '로딩 애니메이션' 느낌을 줌 - dashoffset보다 플랫폼에 상관없이 안정적으로 보임."""
         for name, fill_id in self.pump_nodes.items():
             self.fluidic_canvas.itemconfigure(
                 fill_id, fill=VALVE_ACTIVE_COLOR if name == function_name else VALVE_IDLE_COLOR
             )
-
-        self.active_pump_line = self.pump_lines.get(function_name)
-        animated = self.flow_lines + ([self.active_pump_line, self.bus_line]
-                                        if self.active_pump_line else [])
-        for line_id in animated:
-            self.fluidic_canvas.itemconfigure(line_id, dash=(6, 4))
 
         port = cfg.VALVE_PORTS.get(function_name)
         self.reagent_label.configure(
             text=f"Commanded Reagent: {function_name} (port {port if port is not None else '?'})"
         )
 
-        self.flow_animating = True
-        self._animate_flow(0)
+        self.flow_dot_paths = []
+        pump_path = self.pump_paths.get(function_name)
+        if pump_path:
+            self.flow_dot_paths.append(pump_path)
+        self.flow_dot_paths.append(self.common_flow_path)
 
-    def _animate_flow(self, offset):
+        for path in self.flow_dot_paths:
+            x, y = path[0]
+            self.flow_dots.append(
+                self.fluidic_canvas.create_oval(x - 4, y - 4, x + 4, y + 4,
+                                                 fill="#333333", outline="")
+            )
+
+        self.flow_animating = True
+        self._animate_flow(0.0)
+
+    def _animate_flow(self, t):
         if not self.flow_animating:
             return
-        animated = self.flow_lines + ([self.active_pump_line, self.bus_line]
-                                        if self.active_pump_line else [])
-        for line_id in animated:
-            self.fluidic_canvas.itemconfigure(line_id, dashoffset=offset)
-        self.root.after(80, self._animate_flow, (offset + 2) % 20)
+        for dot_id, path in zip(self.flow_dots, self.flow_dot_paths):
+            x, y = self._point_on_path(path, t)
+            self.fluidic_canvas.coords(dot_id, x - 4, y - 4, x + 4, y + 4)
+        next_t = t + 0.04
+        if next_t > 1.0:
+            next_t -= 1.0
+        self.root.after(40, self._animate_flow, next_t)
 
     def _stop_flow_animation(self):
         self.flow_animating = False
-        animated = self.flow_lines + ([self.active_pump_line, self.bus_line]
-                                        if self.active_pump_line else [])
-        for line_id in animated:
-            self.fluidic_canvas.itemconfigure(line_id, dash=())
+        for dot_id in self.flow_dots:
+            self.fluidic_canvas.delete(dot_id)
+        self.flow_dots = []
+        self.flow_dot_paths = []
         for fill_id in self.pump_nodes.values():
             self.fluidic_canvas.itemconfigure(fill_id, fill=VALVE_IDLE_COLOR)
 
