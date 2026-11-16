@@ -7,6 +7,8 @@ Feature Map으로 픽셀 해상도로 확대해서 실제 BMP를 만든다.
 """
 
 import csv
+import os
+import random
 import numpy as np
 from PIL import Image
 
@@ -45,6 +47,34 @@ def load_feature_sequences(csv_path: str) -> list:
             rows.append([cell.strip().upper() for cell in row])
     flat = [cell for row in rows for cell in row]
     return flat, len(rows), len(rows[0]) if rows else 0
+
+
+def place_sequences_on_grid(sequences: list, feat_w: int, feat_h: int,
+                             replicates: int = 1, randomize: bool = False,
+                             seed: int = None) -> list:
+    """서열 목록을 Feature 격자에 자동 배치.
+
+    각 서열을 replicates번 복제한 뒤, 순서대로(randomize=False) 또는
+    무작위로(randomize=True) 격자 칸에 채운다. 남는 칸은 빈 문자열("").
+    """
+    total_cells = feat_w * feat_h
+
+    expanded = []
+    for seq in sequences:
+        expanded.extend([seq] * replicates)
+
+    if len(expanded) > total_cells:
+        raise ValueError(
+            f"서열({len(sequences)}개) x 복제({replicates}) = {len(expanded)}개가 "
+            f"격자 칸 수({total_cells} = {feat_w}x{feat_h})보다 많습니다."
+        )
+
+    expanded.extend([""] * (total_cells - len(expanded)))
+
+    if randomize:
+        random.Random(seed).shuffle(expanded)
+
+    return expanded
 
 
 def compute_steps(sequences: list):
@@ -97,15 +127,12 @@ def save_mask_bmp(pixel_mask: np.ndarray, path: str):
     img.save(path)
 
 
-def build_all_masks(sequence_csv_path: str, pixel_w: int, pixel_h: int,
-                     bin_w: int, bin_h: int, border: int, out_dir: str):
-    """전체 파이프라인: 서열표 -> 스텝별 BMP 파일들 생성.
-    반환: [(염기문자, bmp_path), ...] 순서대로.
-    """
-    import os
+def _render_masks(sequences: list, feat_h: int, feat_w: int,
+                   pixel_w: int, pixel_h: int, bin_w: int, bin_h: int,
+                   border: int, out_dir: str) -> list:
+    """공통 코어: 1차원 서열 리스트 -> 스텝별 BMP 파일들. 반환: [(염기, bmp_path), ...]"""
     os.makedirs(out_dir, exist_ok=True)
 
-    sequences, feat_h, feat_w = load_feature_sequences(sequence_csv_path)
     feature_map = build_feature_map(pixel_w, pixel_h, bin_w, bin_h, border)
     steps = compute_steps(sequences)
 
@@ -117,3 +144,25 @@ def build_all_masks(sequence_csv_path: str, pixel_w: int, pixel_h: int,
         results.append((base, bmp_path))
 
     return results
+
+
+def build_all_masks(sequence_csv_path: str, pixel_w: int, pixel_h: int,
+                     bin_w: int, bin_h: int, border: int, out_dir: str) -> list:
+    """Feature 격자 CSV(이미 배치 완료된 2차원 서열표)를 직접 읽어서 마스크 생성.
+    Feature 개수가 적어서 사람이 직접 격자를 채울 수 있는 경우에 사용.
+    """
+    sequences, feat_h, feat_w = load_feature_sequences(sequence_csv_path)
+    return _render_masks(sequences, feat_h, feat_w, pixel_w, pixel_h, bin_w, bin_h, border, out_dir)
+
+
+def build_all_masks_from_list(sequence_list: list, pixel_w: int, pixel_h: int,
+                               bin_w: int, bin_h: int, border: int, out_dir: str,
+                               replicates: int = 1, randomize: bool = False,
+                               seed: int = None) -> list:
+    """서열 '목록'(한 줄에 서열 하나) + 배치 옵션 -> 자동으로 격자에 배치하고 마스크 생성.
+    Feature 개수가 많아서 사람이 직접 격자를 채울 수 없는 경우에 사용.
+    """
+    feat_w = pixel_w // bin_w
+    feat_h = pixel_h // bin_h
+    sequences = place_sequences_on_grid(sequence_list, feat_w, feat_h, replicates, randomize, seed)
+    return _render_masks(sequences, feat_h, feat_w, pixel_w, pixel_h, bin_w, bin_h, border, out_dir)
