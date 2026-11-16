@@ -38,11 +38,11 @@ class MainWindow:
         title_box = tk.Frame(inner, bg=HEADER_BG)
         title_box.pack(side="left")
         tk.Label(
-            title_box, text="MAS 2.0 SYNTHESIS CONTROL",
+            title_box, text="DPEG SYNTHESIZER",
             font=("Segoe UI", 15, "bold"), fg=TITLE_COLOR, bg=HEADER_BG,
         ).pack(anchor="w")
         tk.Label(
-            title_box, text="Photolithographic DNA Synthesis Platform",
+            title_box, text="Diagnostic Platform Experts Groups",
             font=("Segoe UI", 10), fg=SUBTITLE_COLOR, bg=HEADER_BG,
         ).pack(anchor="w")
 

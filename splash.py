@@ -45,7 +45,7 @@ def show_splash(root: tk.Tk, duration_ms: int = 2500, on_done=None):
     ).pack(pady=(30, 8))
 
     tk.Label(
-        container, text="Photolithographic DNA Synthesis Platform",
+        container, text=ORG_NAME,
         font=("Segoe UI", 11), fg=SUBTITLE_COLOR, bg=BG_COLOR,
     ).pack(pady=(0, 20))
 
@@ -91,14 +91,9 @@ def show_splash(root: tk.Tk, duration_ms: int = 2500, on_done=None):
     _tick()
 
     tk.Label(
-        container, text=ORG_NAME, font=("Segoe UI", 10),
-        fg=FOOTER_COLOR, bg=BG_COLOR,
-    ).pack()
-
-    tk.Label(
         container, text=f"Build {BUILD_DATE}", font=("Segoe UI", 9),
         fg=FOOTER_COLOR, bg=BG_COLOR,
-    ).pack(pady=(2, 0))
+    ).pack()
 
     def close_and_continue():
         splash.destroy()
