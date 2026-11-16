@@ -254,6 +254,23 @@ class SynthesisTab:
         self.progress_label = ttk.Label(run_frame, text="Idle")
         self.progress_label.pack(side="left", padx=20)
 
+        # Overall progress bar (스플래시와 동일한 무채색 스타일 재사용)
+        progress_bar_frame = ttk.Frame(self.parent, padding=(10, 0, 10, 10))
+        progress_bar_frame.pack(fill="x")
+        style = ttk.Style()
+        style.configure(
+            "Gray.Horizontal.TProgressbar",
+            troughcolor=BG_COLOR, background="#4d4d4d",
+            bordercolor="#bfbfbf", lightcolor="#4d4d4d", darkcolor="#4d4d4d",
+        )
+        self.overall_progress = ttk.Progressbar(
+            progress_bar_frame, style="Gray.Horizontal.TProgressbar",
+            orient="horizontal", mode="determinate", maximum=100, value=0,
+        )
+        self.overall_progress.pack(side="left", fill="x", expand=True)
+        self.overall_progress_label = ttk.Label(progress_bar_frame, text="0%", width=5)
+        self.overall_progress_label.pack(side="left", padx=(8, 0))
+
         # Cycle step cards (current cycle's stages, highlighted as they run)
         self._build_cycle_cards(self.parent)
 
@@ -606,6 +623,8 @@ class SynthesisTab:
         self.card_vars["estimated_total"].set(format_duration(self.estimated_total_s))
         self.card_vars["elapsed"].set("0:00:00")
         self.card_vars["remaining"].set(format_duration(self.estimated_total_s))
+        self.overall_progress["value"] = 0
+        self.overall_progress_label.configure(text="0%")
 
         self._tick_elapsed()
 
@@ -620,6 +639,10 @@ class SynthesisTab:
         elapsed = time.time() - self.run_start_time
         self.card_vars["elapsed"].set(format_duration(elapsed))
         self.root.after(500, self._tick_elapsed)
+
+    def _set_overall_progress(self, percent):
+        self.overall_progress["value"] = percent
+        self.overall_progress_label.configure(text=f"{int(percent)}%")
 
     def _read_inputs(self):
         return dict(
@@ -729,6 +752,9 @@ class SynthesisTab:
                 self.completed_duration_s += step_duration(step)
                 remaining = max(0.0, self.estimated_total_s - self.completed_duration_s)
                 self.root.after(0, self.card_vars["remaining"].set, format_duration(remaining))
+                percent = 0 if self.estimated_total_s <= 0 else min(
+                    100, 100 * self.completed_duration_s / self.estimated_total_s)
+                self.root.after(0, self._set_overall_progress, percent)
             else:
                 self._log("=== Full sequence completed ===")
                 final_badge = "COMPLETED"
@@ -747,3 +773,5 @@ class SynthesisTab:
         self.stop_button.configure(state="disabled")
         self.progress_label.configure(text="Idle")
         self.set_status(final_badge)
+        if final_badge == "COMPLETED":
+            self._set_overall_progress(100)
