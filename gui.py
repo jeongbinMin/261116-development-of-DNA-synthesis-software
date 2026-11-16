@@ -253,6 +253,14 @@ class SynthesizerGUI:
 
 
 if __name__ == "__main__":
+    from splash import show_splash
+
     root = tk.Tk()
-    app = SynthesizerGUI(root)
+    root.withdraw()  # 스플래시 보여주는 동안 메인 창은 숨김
+
+    def _launch_main():
+        root.deiconify()
+        SynthesizerGUI(root)
+
+    show_splash(root, duration_ms=2500, on_done=_launch_main)
     root.mainloop()
