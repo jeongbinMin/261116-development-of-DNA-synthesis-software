@@ -15,7 +15,7 @@ import tkinter as tk
 from tkinter import filedialog, ttk
 
 import devices_config as cfg
-from column_parser import build_column_sequence
+from column_parser import build_column_sequence, read_sequence, load_monomer_protocol
 from dmd_mask_builder import build_all_masks_from_list
 from dmd_array_sequence import build_dmd_array_steps
 from synthesis_mode import build_context, COLUMN, DMD_ARRAY
@@ -51,6 +51,58 @@ def format_duration(seconds: float) -> str:
     h, rem = divmod(seconds, 3600)
     m, s = divmod(rem, 60)
     return f"{h:d}:{m:02d}:{s:02d}"
+
+
+# Function 이름 -> 카드에 표시할 사람이 읽기 좋은 단계 이름.
+# 어떤 염기든(a/t/g/c) 같은 "Couple" 카드로 표시 - 실제로 하는 화학 작업이 같기 때문.
+STAGE_LABELS = {
+    "dblk": "Deblock",
+    "wsh": "Wash",
+    "wsha": "Wash",
+    "act": "Activate",
+    "ox": "Oxidize",
+    "a": "Couple", "t": "Couple", "g": "Couple", "c": "Couple",
+}
+
+
+def step_stage_label(step) -> str:
+    """카드에 표시할 짧은 단계 이름. 하드코딩된 화학 순서가 아니라 실제 Step에서 추출."""
+    if isinstance(step, DmdExposeStep):
+        return "Expose"
+    if isinstance(step, FluidStep):
+        return STAGE_LABELS.get(step.function_name, step.function_name.upper())
+    return step.__class__.__name__
+
+
+def compute_cycle_template(steps: list, inp: dict):
+    """실제 Step 리스트에서 '한 사이클'의 길이를 추정.
+
+    컬럼합성: 서열의 첫 번째 염기에 쓰인 프로토콜의 스텝 개수가 한 사이클 길이.
+        (각 염기 프로토콜이 서로 다른 스텝 수를 가질 수도 있지만, 보통 같은 구성을
+        쓰므로 첫 염기 기준으로 카드를 만들고 실제 진행은 전체 스텝 수 기준으로 계산)
+    DMD 어레이: DmdExposeStep이 다시 나오는 지점까지가 한 사이클(노광 1회 + 그 염기의 유체 스텝들).
+
+    Returns: (template_len, total_cycles)
+    """
+    expose_indices = [i for i, s in enumerate(steps) if isinstance(s, DmdExposeStep)]
+    if expose_indices:
+        template_len = (expose_indices[1] - expose_indices[0]) if len(expose_indices) >= 2 else len(steps)
+        total_cycles = len(expose_indices)
+        return template_len, total_cycles
+
+    # 컬럼합성: 서열 첫 염기의 프로토콜 스텝 수를 사이클 템플릿으로 사용
+    seq_path = inp.get("seq_path")
+    protocol_dir = inp.get("col_protocol_dir")
+    if seq_path and protocol_dir:
+        sequence = read_sequence(seq_path)
+        if sequence:
+            first_base_steps = load_monomer_protocol(
+                os.path.join(protocol_dir, f"{sequence[0]}.csv")
+            )
+            if first_base_steps:
+                return len(first_base_steps), len(sequence)
+
+    return len(steps) or 1, 1
 
 
 class ReagentCheckDialog(tk.Toplevel):
@@ -202,6 +254,9 @@ class SynthesisTab:
         self.progress_label = ttk.Label(run_frame, text="Idle")
         self.progress_label.pack(side="left", padx=20)
 
+        # Cycle step cards (current cycle's stages, highlighted as they run)
+        self._build_cycle_cards(self.parent)
+
         # 02/03: Progress info cards (left) + Fluidic Path diagram (right)
         middle = ttk.Frame(self.parent, padding=10)
         middle.pack(fill="x")
@@ -299,6 +354,49 @@ class SynthesisTab:
                       font=("Segoe UI", 14, "bold")).pack(anchor="w")
         frame.grid_columnconfigure(0, weight=1)
         frame.grid_columnconfigure(1, weight=1)
+
+    def _build_cycle_cards(self, parent):
+        style = ttk.Style()
+        style.configure("CycleActive.TFrame", background=VALVE_ACTIVE_COLOR)
+        style.configure("CycleActive.TLabel", background=VALVE_ACTIVE_COLOR, foreground="#ffffff")
+
+        self.cycle_frame = ttk.LabelFrame(parent, text="Synthesis Cycle", padding=10)
+        self.cycle_frame.pack(fill="x")
+
+        self.cycle_label_var = tk.StringVar(value="No run started yet")
+        ttk.Label(self.cycle_frame, textvariable=self.cycle_label_var,
+                  font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 6))
+
+        self.cycle_cards_row = ttk.Frame(self.cycle_frame)
+        self.cycle_cards_row.pack(fill="x")
+
+        self.cycle_card_widgets = []   # list of (card_frame, label_widget)
+        self.cycle_template_len = 0
+        self.cycle_total_cycles = 1
+
+    def _render_cycle_cards(self, labels):
+        """현재 런의 사이클 템플릿(labels)에 맞춰 카드를 다시 그림.
+        모드/프로토콜이 바뀔 수 있으므로 매 런마다 새로 그림.
+        실제 프로토콜 CSV 스텝 수에 따라 카드 개수가 많아질 수 있어(예: 20개 이상),
+        한 줄에 다 안 들어갈 경우를 대비해 그리드로 줄바꿈."""
+        for card, _ in self.cycle_card_widgets:
+            card.destroy()
+        self.cycle_card_widgets = []
+
+        cards_per_row = 10
+        for i, label in enumerate(labels):
+            card = ttk.Frame(self.cycle_cards_row, relief="groove", padding=(10, 6))
+            card.grid(row=i // cards_per_row, column=i % cards_per_row, padx=4, pady=4, sticky="nsew")
+            lbl = ttk.Label(card, text=label, font=("Segoe UI", 9, "bold"))
+            lbl.pack()
+            self.cycle_card_widgets.append((card, lbl))
+
+    def _highlight_cycle_card(self, position, cycle_index, total_cycles):
+        for i, (card, lbl) in enumerate(self.cycle_card_widgets):
+            active = (i == position)
+            card.configure(style="CycleActive.TFrame" if active else "TFrame")
+            lbl.configure(style="CycleActive.TLabel" if active else "TLabel")
+        self.cycle_label_var.set(f"Cycle {cycle_index + 1} / {total_cycles}")
 
     def _build_fluidic_path(self, parent):
         frame = ttk.LabelFrame(parent, text="Fluidic Path", padding=10)
@@ -581,6 +679,9 @@ class SynthesisTab:
             if mask_results:
                 self._preview_mask(0)
 
+        self.cycle_template_len, self.cycle_total_cycles = compute_cycle_template(steps, inp)
+        self._render_cycle_cards([step_stage_label(s) for s in steps[:self.cycle_template_len]])
+
         return steps, meta
 
     def _run_worker(self, steps, meta, inp):
@@ -606,6 +707,12 @@ class SynthesisTab:
                 self.root.after(0, lambda i=i, n=len(steps): self.progress_label.configure(
                     text=f"{i}/{n} in progress"))
                 self._log(f"[{i}/{len(steps)}] {step}")
+
+                template_len = max(1, self.cycle_template_len)
+                position = (i - 1) % template_len
+                cycle_index = (i - 1) // template_len
+                self.root.after(0, self._highlight_cycle_card,
+                                 position, cycle_index, self.cycle_total_cycles)
 
                 if isinstance(step, FluidStep):
                     self.root.after(0, self._start_flow_animation, step.function_name)
