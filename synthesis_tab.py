@@ -423,6 +423,48 @@ class SynthesisTab:
         d3, d4 = ccw(p1, p2, p3), ccw(p1, p2, p4)
         return ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0))
 
+    @staticmethod
+    def _octilinear_route(p1, p2):
+        """두 점을 수평/수직/45도, 이 세 각도만으로 연결 (PCB 배선 스타일).
+        임의의 비스듬한 각도로 바로 긋지 않고, 45도로 먼저 꺾은 뒤 나머지
+        구간은 수평/수직 직선으로 - 손으로 대충 그은 선이 아니라 "설계된"
+        배선처럼 보이게 함."""
+        x1, y1 = p1
+        x2, y2 = p2
+        dx, dy = x2 - x1, y2 - y1
+        diag = min(abs(dx), abs(dy))
+        if diag == 0:
+            return [p1, p2]
+        sx = 1 if dx >= 0 else -1
+        sy = 1 if dy >= 0 else -1
+        mid = (x1 + sx * diag, y1 + sy * diag)
+        return [p1, mid, p2]
+
+    @staticmethod
+    def _chamfer_corners(path, chamfer=14):
+        """경로가 꺾이는 지점(90도)을 그대로 두지 않고, 양쪽에서 chamfer
+        만큼 당겨와 45도로 모서리를 깎음. 우회 경로가 각진 사각형처럼
+        답답해 보이지 않고 PCB 배선처럼 자연스럽게 보이도록."""
+        if len(path) < 3:
+            return path
+
+        def pull(frm, to, dist):
+            fx, fy = frm
+            tx, ty = to
+            length = math.hypot(tx - fx, ty - fy)
+            if length == 0:
+                return to
+            t = min(dist, length / 2) / length
+            return (tx + (fx - tx) * t, ty + (fy - ty) * t)
+
+        new_path = [path[0]]
+        for i in range(1, len(path) - 1):
+            prev_pt, corner, next_pt = path[i - 1], path[i], path[i + 1]
+            new_path.append(pull(prev_pt, corner, chamfer))
+            new_path.append(pull(next_pt, corner, chamfer))
+        new_path.append(path[-1])
+        return new_path
+
     @classmethod
     def _route_list_to_targets(cls, rows_cy, targets, list_x1, outer_x):
         """리스트의 각 행(rows_cy)에서 밸브 둘레의 정확한 목표 지점(targets)까지,
@@ -433,7 +475,12 @@ class SynthesisTab:
         수밖에 없다(원형과 직선을 겹침 없이 완전히 대응시킬 수 없다는 위상
         수학적 한계). 그래서 직선으로 먼저 다 그어본 뒤, 교차가 생긴 선만
         밸브 바깥쪽(outer_x)으로 크게 돌아가게 다시 그려서 실제로 교차가
-        없어질 때까지 반복한다."""
+        없어질 때까지 반복한다.
+
+        교차 판정은 꺾기 전의 간단한 사각형 경로로 하고(그래야 계산이
+        단순하고 확실함), 최종적으로 반환하기 직전에만 PCB 배선처럼
+        45도로 꺾거나(직선 구간) 모서리를 깎아서(우회 구간) 보기 좋게
+        다듬는다 - 교차 판정 자체에는 영향 없음."""
         n = len(rows_cy)
         paths = [[(list_x1, rows_cy[i]), targets[i]] for i in range(n)]
 
@@ -464,7 +511,41 @@ class SynthesisTab:
             target_idx = i if i not in detoured else j
             detour(target_idx)
             detoured.add(target_idx)
-        return paths
+
+        styled_paths = []
+        for p in paths:
+            if len(p) == 2:
+                styled_paths.append(cls._octilinear_route(p[0], p[1]))
+            else:
+                styled_paths.append(cls._chamfer_corners(p))
+
+        # 45도로 꺾거나 모서리를 깎으면서 선이 원래 직선/사각형 경로보다 살짝
+        # 부풀 수 있어서, 그 과정에서 새로 교차가 생기면 그 선만 꾸미기 전
+        # (교차 없음이 보장된) 원래 경로로 되돌림 - 예쁘게 보이는 것보다
+        # 교차 없음이 우선.
+        def find_style_crossing():
+            segs = []
+            for idx, p in enumerate(styled_paths):
+                for k in range(len(p) - 1):
+                    segs.append((p[k], p[k + 1], idx))
+            for i in range(len(segs)):
+                for j in range(i + 1, len(segs)):
+                    if segs[i][2] == segs[j][2]:
+                        continue
+                    if cls._seg_intersect(segs[i][0], segs[i][1], segs[j][0], segs[j][1]):
+                        return segs[i][2], segs[j][2]
+            return None
+
+        reverted = set()
+        for _ in range(n * 2):
+            pair = find_style_crossing()
+            if pair is None:
+                break
+            i, j = pair
+            target_idx = i if i not in reverted else j
+            styled_paths[target_idx] = paths[target_idx]
+            reverted.add(target_idx)
+        return styled_paths
 
     def _build_fluidic_path(self, parent):
         """RV(12-port 밸브)는 포트마다 독립된 라인을 갖고, 그 중 하나가 선택되면
@@ -605,9 +686,11 @@ class SynthesisTab:
                                          text="FLOW\nCELL", font=("Segoe UI", 11, "bold"))
 
         waste_y0, waste_y1 = rv_y + 50, rv_y + 95
+        fc_to_waste_path = self._chamfer_corners(
+            [(fc_x1, rv_y), (waste_x0 + 45, rv_y), (waste_x0 + 45, waste_y0)], chamfer=14
+        )
         self.fc_to_waste_line = self.fluidic_canvas.create_line(
-            fc_x1, rv_y, waste_x0 + 45, rv_y, waste_x0 + 45, waste_y0,
-            fill="#9aa5b1", width=3
+            *[c for pt in fc_to_waste_path for c in pt], fill="#9aa5b1", width=3
         )
         self.fluidic_canvas.create_rectangle(waste_x0, waste_y0, waste_x1, waste_y1,
                                               outline="#1a1a1a", width=2)
