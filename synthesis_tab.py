@@ -18,8 +18,70 @@ from dmd_mask_builder import build_all_masks_from_list
 from dmd_array_sequence import build_dmd_array_steps
 from synthesis_mode import build_context, COLUMN, DMD_ARRAY
 from experiment_log import ExperimentLog
+from steps import FluidStep
 
 BG_COLOR = "#f2f2f2"
+
+
+def compute_reagent_totals(steps: list) -> dict:
+    """FluidStep들의 function_name별 amount_ul 합계. DmdExposeStep 등은 무시."""
+    totals = {}
+    for step in steps:
+        if isinstance(step, FluidStep):
+            totals[step.function_name] = totals.get(step.function_name, 0.0) + step.amount_ul
+    return totals
+
+
+class ReagentCheckDialog(tk.Toplevel):
+    """시작 전 '시약 충분한가' 확인 모달. 체크해야만 Confirm & Start 활성화."""
+
+    def __init__(self, root: tk.Tk, totals: dict, on_confirm):
+        super().__init__(root)
+        self.title("Reagent Volume Check")
+        self.configure(bg=BG_COLOR)
+        self.geometry("420x420")
+        self.transient(root)
+        self.grab_set()  # modal
+
+        self.on_confirm = on_confirm
+
+        ttk.Label(self, text="Required volume per reagent for this recipe:",
+                  background=BG_COLOR).pack(anchor="w", padx=15, pady=(15, 5))
+
+        tree_frame = ttk.Frame(self)
+        tree_frame.pack(fill="both", expand=True, padx=15)
+        tree = ttk.Treeview(tree_frame, columns=("reagent", "volume"), show="headings", height=10)
+        tree.heading("reagent", text="Reagent (Function)")
+        tree.heading("volume", text="Required Volume (uL)")
+        tree.column("reagent", width=200, anchor="center")
+        tree.column("volume", width=180, anchor="center")
+        for name, total in sorted(totals.items()):
+            tree.insert("", "end", values=(name, f"{total:.1f}"))
+        tree.pack(fill="both", expand=True)
+
+        if not totals:
+            ttk.Label(self, text="(No fluid steps in this recipe.)",
+                      background=BG_COLOR).pack(pady=5)
+
+        self.confirm_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            self, text="Sufficient reagents are prepared",
+            variable=self.confirm_var, command=self._on_check_toggle,
+        ).pack(anchor="w", padx=15, pady=15)
+
+        btn_row = ttk.Frame(self)
+        btn_row.pack(fill="x", padx=15, pady=(0, 15))
+        self.confirm_button = ttk.Button(btn_row, text="Confirm & Start",
+                                          command=self._on_confirm_clicked, state="disabled")
+        self.confirm_button.pack(side="left")
+        ttk.Button(btn_row, text="Cancel", command=self.destroy).pack(side="left", padx=5)
+
+    def _on_check_toggle(self):
+        self.confirm_button.configure(state="normal" if self.confirm_var.get() else "disabled")
+
+    def _on_confirm_clicked(self):
+        self.destroy()
+        self.on_confirm()
 
 
 class SynthesisTab:
@@ -148,16 +210,28 @@ class SynthesisTab:
 
     # ---------------- execution ----------------
     def _on_start(self):
+        inp = self._read_inputs()
+        try:
+            steps, meta = self._build_recipe(inp)
+        except Exception as e:
+            self._log(f"[Input Error] {e}")
+            return
+
+        totals = compute_reagent_totals(steps)
+        ReagentCheckDialog(
+            self.root, totals,
+            on_confirm=lambda: self._launch_run(steps, meta, inp),
+        )
+
+    def _launch_run(self, steps, meta, inp):
         self.stop_event.clear()
         self.start_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
         self.progress_label.configure(text="Preparing (connecting devices)...")
         self.set_status("RUNNING")
 
-        gui_inputs = self._read_inputs()
-
         self.worker_thread = threading.Thread(
-            target=self._run_worker, args=(gui_inputs,), daemon=True
+            target=self._run_worker, args=(steps, meta, inp), daemon=True
         )
         self.worker_thread.start()
 
@@ -180,7 +254,9 @@ class SynthesisTab:
         self.set_status("STOPPING")
         self._log("[Stop requested - will halt after the current step]")
 
-    def _build_steps(self, inp):
+    def _build_recipe(self, inp):
+        """입력값으로 Step 리스트만 만듦 (장비 연결은 아직 안 함 - Reagent Check 전에
+        하드웨어에 연결할 필요는 없으므로)."""
         mode = inp["mode"]
 
         if mode == COLUMN:
@@ -212,18 +288,9 @@ class SynthesisTab:
             meta = dict(synthesis_mode=mode, sequence_path=inp["seqlist_path"],
                         protocol_path=inp["dmd_protocol_dir"])
 
-        ctx = build_context(mode, use_mock=inp["use_mock"])
-        return steps, dict(meta, ctx=ctx)
+        return steps, meta
 
-    def _run_worker(self, inp):
-        try:
-            steps, meta = self._build_steps(inp)
-        except Exception as e:
-            self._log(f"[Input Error] {e}")
-            self.root.after(0, self._on_run_finished, "ERROR")
-            return
-
-        ctx = meta["ctx"]
+    def _run_worker(self, steps, meta, inp):
         exp_log = ExperimentLog()
         run_id = exp_log.start(
             synthesis_mode=meta["synthesis_mode"],
@@ -236,6 +303,7 @@ class SynthesisTab:
         status = "completed"
         final_badge = "IDLE"
         try:
+            ctx = build_context(meta["synthesis_mode"], use_mock=inp["use_mock"])
             for i, step in enumerate(steps, 1):
                 if self.stop_event.is_set():
                     status = "stopped"
