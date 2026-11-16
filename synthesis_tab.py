@@ -7,6 +7,7 @@ own window. Reports status changes (running/idle/etc.) back to the header
 badges via callbacks.
 """
 
+import itertools
 import math
 import os
 import queue
@@ -424,47 +425,31 @@ class SynthesisTab:
         return ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0))
 
     @classmethod
-    def _route_list_to_targets(cls, rows_cy, targets, list_x1, outer_x):
-        """리스트의 각 행(rows_cy)에서 밸브 둘레의 정확한 목표 지점(targets)까지,
-        선끼리 겹치지 않게 경로를 계산.
+    def _min_crossing_assignment(cls, cols_x, source_y, targets):
+        """한 줄에 나란히 놓인 6칸(cols_x)을 밸브 둘레의 정확한 목표 지점
+        (targets, 역시 6개) 중 어디에 연결할지 - 가능한 모든 배정(6! = 720
+        가지, 순식간에 계산됨)을 다 따져서 직선 연결선끼리 교차가 없는
+        배정을 찾는다. 두 점 집합(일직선 위의 6개, 호 위의 6개) 사이의
+        교차 없는 대응은 '사슬 매칭'처럼 순서를 뒤집어 가며 안쪽/바깥쪽을
+        번갈아 잇는 특정 패턴이어야 하는데, 이걸 공식으로 유도하기보다
+        그냥 전수조사하는 게 더 간단하고 확실하다.
 
-        목표 지점들이 원 전체(360도)에 퍼져 있으면, 리스트는 일자로 쭉 뻗어
-        있어서 순서를 아무리 잘 맞춰도 수학적으로 1~2곳에서는 교차가 생길
-        수밖에 없다(원형과 직선을 겹침 없이 완전히 대응시킬 수 없다는 위상
-        수학적 한계). 그래서 직선으로 먼저 다 그어본 뒤, 교차가 생긴 선만
-        밸브 바깥쪽(outer_x)으로 크게 돌아가게 다시 그려서 실제로 교차가
-        없어질 때까지 반복한다."""
-        n = len(rows_cy)
-        paths = [[(list_x1, rows_cy[i]), targets[i]] for i in range(n)]
-
-        def find_crossing():
-            segs = []
-            for idx, p in enumerate(paths):
-                for k in range(len(p) - 1):
-                    segs.append((p[k], p[k + 1], idx))
-            for i in range(len(segs)):
-                for j in range(i + 1, len(segs)):
-                    if segs[i][2] == segs[j][2]:
-                        continue
+        반환: {col_index: target_index} - 교차가 0인 배정이 없으면
+        가장 적은 배정을 씀."""
+        n = len(targets)
+        best = None
+        for perm in itertools.permutations(range(n)):
+            cross = 0
+            segs = [((cols_x[i], source_y), targets[perm[i]]) for i in range(n)]
+            for i in range(n):
+                for j in range(i + 1, n):
                     if cls._seg_intersect(segs[i][0], segs[i][1], segs[j][0], segs[j][1]):
-                        return segs[i][2], segs[j][2]
-            return None
-
-        def detour(idx):
-            cy = rows_cy[idx]
-            tx, ty = targets[idx]
-            paths[idx] = [(list_x1, cy), (outer_x, cy), (outer_x, ty), (tx, ty)]
-
-        detoured = set()
-        for _ in range(n * 2):
-            pair = find_crossing()
-            if pair is None:
-                break
-            i, j = pair
-            target_idx = i if i not in detoured else j
-            detour(target_idx)
-            detoured.add(target_idx)
-        return paths
+                        cross += 1
+            if best is None or cross < best[0]:
+                best = (cross, perm)
+                if cross == 0:
+                    break
+        return best[1]
 
     def _build_fluidic_path(self, parent):
         """RV(12-port 밸브)는 포트마다 독립된 라인을 갖고, 그 중 하나가 선택되면
@@ -472,37 +457,38 @@ class SynthesisTab:
         그래서 펌프->RV 구간은 포트별로 완전히 분리된 선으로 그리고, RV->Flow Cell
         구간만 공용선 하나로 그린다.
 
-        밸브는 실제로 전체가 둥글게 12포트이므로, 각 포트의 위치(문 그림의
-        눈금)와 거기로 들어가는 튜브가 정확히 같은 좌표를 쓴다(장식용 눈금
-        따로, 튜브 따로였던 이전 버전과 다름). 포트 번호 순서대로 시계
-        방향으로 원 전체에 고르게 배치하고, 리스트에서 거기까지 가는 선은
-        _route_list_to_targets()가 교차 없이 계산한다."""
+        밸브는 실제로 전체가 둥글게 12포트이고, 각 포트 눈금과 거기로 들어가는
+        튜브는 정확히 같은 좌표(self.port_points)를 쓴다. 12개를 한 줄로 늘어선
+        리스트에서 전부 연결하면 교차를 완전히 없앨 수 없어서(원과 직선을 겹침
+        없이 대응시킬 수 없는 위상수학적 한계), 위 6개/아래 6개로 나눠 배치.
+        포트 번호로 보면 위쪽 6개(각도 0~180도, 밸브 위쪽 절반)와 아래쪽 6개
+        (각도 180~360도, 아래쪽 절반)로 자연히 나뉘고, 각 줄 안에서는 6칸짜리
+        한 줄 <-> 호 위의 6개 점 사이에서 교차 없는 배정을 찾을 수 있다
+        (_min_crossing_assignment, 6! = 720가지 전수조사)."""
         frame = ttk.LabelFrame(parent, text="Fluidic Path", padding=10)
         frame.pack(side="left", fill="both", expand=True, padx=(5, 0))
 
         port_to_name = {port: name for name, port in cfg.VALVE_PORTS.items()}
         self.display_names = load_display_names()
-        # 밸브 포트가 12개이므로 리스트도 12칸을 다 보여주고, 펌프가 없는 포트는
-        # "Empty"로 비워서 표시 (실제로 연결 안 된 상태를 숨기지 않기 위함)
         port_numbers = list(range(1, 13))
-        n = len(port_numbers)
 
-        row_h, row_gap = 30, 10
-        list_x0, list_x1 = 20, 110
-        list_top = 20
-        list_bottom = list_top + n * row_h + (n - 1) * row_gap
+        pump_w, gap = 42, 14
+        grid_left = 30
+        top_y0, top_y1 = 35, 95
+        row_margin = 85                         # 박스 끝 ~ RV 중심까지 거리 (위/아래 대칭)
+        bus_y = top_y1 + row_margin
+        bot_y0, bot_y1 = bus_y + row_margin, bus_y + row_margin + 60
 
-        rv_x = list_x1 + 170
+        rv_x = grid_left + 6 * (pump_w + gap) + 90
         rv_r = 55
-        rv_y = (list_top + list_bottom) / 2   # RV를 리스트 세로 한가운데에 배치
-        outer_x = rv_x + rv_r + 30            # 교차 회피용 우회 경로가 지나가는 바깥쪽 x
-        fc_x0 = outer_x + 40
+        rv_y = bus_y
+        fc_x0 = rv_x + rv_r + 70
         fc_x1 = fc_x0 + 110
         waste_x0 = fc_x1 + 50
         waste_x1 = waste_x0 + 90
 
         canvas_w = waste_x1 + 20
-        canvas_h = max(list_bottom, rv_y + 95) + 20   # rv_y+95 = Waste 박스 아래쪽 끝
+        canvas_h = bot_y1 + 30
 
         self.fluidic_canvas = tk.Canvas(frame, width=canvas_w, height=canvas_h,
                                          bg="white", highlightthickness=0)
@@ -515,59 +501,67 @@ class SynthesisTab:
             return rv_x + rv_r * math.cos(angle), rv_y - rv_r * math.sin(angle)
 
         # 포트 번호 순서대로 시계방향, 원 전체(360도)에 고르게 배치 - 눈금과
-        # 튜브 목표 지점이 완전히 같은 좌표(이 dict 하나만 씀).
-        # 시작 각도 15도는 임의로 고른 게 아니라, 지금 리스트/밸브 크기 조합에서
-        # _route_list_to_targets()의 우회로만으로 교차가 완전히 0이 되는 값을
-        # 찾아서 고정한 것 (다른 각도는 교차가 안 없어지는 경우가 있었음).
+        # 튜브 목표 지점이 완전히 같은 좌표(이 dict 하나만 씀). 시작 각도
+        # 15도는 포트 1~12가 정확히 6개/6개로 위/아래에 나뉘도록 고른 것
+        # (0도, 180도 정각에 포트가 걸치면 어느 줄인지 애매해지므로 피함).
         self.port_points = {p: rv_point(15 + (p - 1) * 30) for p in port_numbers}
         # 공용 출구(밸브->Flow Cell)는 어느 포트와도 겹치지 않는 포트 12-1 사이 틈으로
         outlet_point = rv_point(0)
 
-        rows_cy = [list_top + i * (row_h + row_gap) + row_h / 2 for i in range(n)]
-        targets = [self.port_points[p] for p in port_numbers]
-        routed_paths = self._route_list_to_targets(rows_cy, targets, list_x1, outer_x)
+        top_ports = [p for p in port_numbers if 0 < (15 + (p - 1) * 30) % 360 < 180]
+        bot_ports = [p for p in port_numbers if p not in top_ports]
+
+        cols_x = [grid_left + i * (pump_w + gap) + pump_w / 2 for i in range(6)]
+        top_targets = [self.port_points[p] for p in top_ports]
+        bot_targets = [self.port_points[p] for p in bot_ports]
+        top_assign = self._min_crossing_assignment(cols_x, top_y1, top_targets)
+        bot_assign = self._min_crossing_assignment(cols_x, bot_y0, bot_targets)
 
         self.pump_nodes = {}      # name -> fill_id
         self.pump_lines = {}      # name -> 연결선 캔버스 id (디버깅/참조용)
         self.pump_paths = {}      # name -> 흐름 애니메이션용 경로 좌표 리스트
 
-        for i, port_number in enumerate(port_numbers):
-            name = port_to_name.get(port_number)
-            has_pump = name in cfg.PUMPS
-            y0 = list_top + i * (row_h + row_gap)
-            y1 = y0 + row_h
-            cy = rows_cy[i]
-            path = routed_paths[i]
+        def draw_row(port_group, assign, box_y0, box_y1, label_y, connect_from_bottom):
+            connect_edge_y = box_y1 if connect_from_bottom else box_y0
+            for col, target_idx in enumerate(assign):
+                port_number = port_group[target_idx]
+                name = port_to_name.get(port_number)
+                has_pump = name in cfg.PUMPS
+                x0 = cols_x[col] - pump_w / 2
+                x1 = cols_x[col] + pump_w / 2
+                cx = cols_x[col]
+                px, py = self.port_points[port_number]
+                path = [(cx, connect_edge_y), (px, py)]
 
-            if has_pump:
-                self.fluidic_canvas.create_rectangle(list_x0, y0, list_x1, y1,
-                                                      outline="#1a1a1a", width=2)
-                fill_id = self.fluidic_canvas.create_rectangle(
-                    list_x0 + 3, y0 + 3, list_x1 - 3, y1 - 3,
-                    fill=VALVE_IDLE_COLOR, outline=""
-                )
-                self.fluidic_canvas.create_text(
-                    (list_x0 + list_x1) / 2, cy,
-                    text=self.display_names.get(name, name), font=("Segoe UI", 9, "bold")
-                )
-                line_id = self.fluidic_canvas.create_line(
-                    *[c for pt in path for c in pt], fill="#9aa5b1", width=2
-                )
-                self.pump_nodes[name] = fill_id
-                self.pump_lines[name] = line_id
-                self.pump_paths[name] = path
-            else:
-                # 펌프가 연결 안 된 포트 - 실선 튜브 대신 점선으로만 표시해서
-                # "존재는 하지만 실제로 연결돼 있지 않다"는 걸 구분되게 함
-                self.fluidic_canvas.create_rectangle(list_x0, y0, list_x1, y1,
-                                                      outline="#bfbfbf", width=2, dash=(3, 2))
-                self.fluidic_canvas.create_text(
-                    (list_x0 + list_x1) / 2, cy,
-                    text="Empty", font=("Segoe UI", 9), fill="#9aa5b1"
-                )
-                self.fluidic_canvas.create_line(
-                    *[c for pt in path for c in pt], fill="#d9d9d9", width=1, dash=(2, 3)
-                )
+                if has_pump:
+                    self.fluidic_canvas.create_rectangle(x0, box_y0, x1, box_y1,
+                                                          outline="#1a1a1a", width=2)
+                    fill_id = self.fluidic_canvas.create_rectangle(
+                        x0 + 3, box_y0 + 3, x1 - 3, box_y1 - 3,
+                        fill=VALVE_IDLE_COLOR, outline=""
+                    )
+                    self.fluidic_canvas.create_text(
+                        cx, label_y, text=self.display_names.get(name, name),
+                        font=("Segoe UI", 8, "bold")
+                    )
+                    line_id = self.fluidic_canvas.create_line(
+                        *[c for pt in path for c in pt], fill="#9aa5b1", width=2
+                    )
+                    self.pump_nodes[name] = fill_id
+                    self.pump_lines[name] = line_id
+                    self.pump_paths[name] = path
+                else:
+                    self.fluidic_canvas.create_rectangle(x0, box_y0, x1, box_y1,
+                                                          outline="#bfbfbf", width=2, dash=(3, 2))
+                    self.fluidic_canvas.create_text(
+                        cx, label_y, text="Empty", font=("Segoe UI", 8), fill="#9aa5b1"
+                    )
+                    self.fluidic_canvas.create_line(
+                        *[c for pt in path for c in pt], fill="#d9d9d9", width=1, dash=(2, 3)
+                    )
+
+        draw_row(top_ports, top_assign, top_y0, top_y1, top_y0 - 10, connect_from_bottom=True)
+        draw_row(bot_ports, bot_assign, bot_y0, bot_y1, bot_y1 + 12, connect_from_bottom=False)
 
         # RV 몸체: 참고 이미지 스타일 - 바깥 링에 12개 눈금, 안쪽에 "12 PORT" 표시,
         # 중앙에서 현재 선택된 포트 쪽으로 바늘(needle)이 가리키도록 함.
