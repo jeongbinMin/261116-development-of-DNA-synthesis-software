@@ -5,6 +5,7 @@
 """
 
 import tkinter as tk
+from tkinter import ttk
 
 APP_NAME = "DPEG DNA Synthesizer"
 ORG_NAME = "Diagnostic Platform Experts Groups"
@@ -54,6 +55,40 @@ def show_splash(root: tk.Tk, duration_ms: int = 2500, on_done=None):
 
     spacer = tk.Frame(container, bg=BG_COLOR)
     spacer.pack(fill="both", expand=True)
+
+    # 진행률 표시줄 (무채색 스타일)
+    style = ttk.Style(splash)
+    style.theme_use(style.theme_use())  # 현재 테마 유지한 채 커스텀 스타일만 추가
+    style.configure(
+        "Gray.Horizontal.TProgressbar",
+        troughcolor=BG_COLOR, background=SUBTITLE_COLOR,
+        bordercolor=LINE_COLOR, lightcolor=SUBTITLE_COLOR, darkcolor=SUBTITLE_COLOR,
+    )
+    progress = ttk.Progressbar(
+        container, style="Gray.Horizontal.TProgressbar",
+        orient="horizontal", mode="determinate", maximum=100,
+    )
+    progress.pack(fill="x", pady=(0, 10))
+
+    status_label = tk.Label(
+        container, text="Loading...", font=("Segoe UI", 9),
+        fg=FOOTER_COLOR, bg=BG_COLOR,
+    )
+    status_label.pack(pady=(0, 10))
+
+    # duration_ms 동안 0 -> 100까지 부드럽게 채우기
+    steps = 40
+    interval = max(duration_ms // steps, 10)
+
+    def _tick(count=0):
+        value = min(100, int((count / steps) * 100))
+        progress["value"] = value
+        if value >= 100:
+            status_label.configure(text="Ready")
+        elif count < steps:
+            splash.after(interval, _tick, count + 1)
+
+    _tick()
 
     tk.Label(
         container, text=ORG_NAME, font=("Segoe UI", 10),
