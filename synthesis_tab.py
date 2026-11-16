@@ -1,9 +1,10 @@
 """
-Synthesis 탭 내용.
+Synthesis tab content.
 
-기존 gui.py(SynthesizerGUI)의 로직을 그대로 가져오되, 독립 창이 아니라
-main_window.py의 Notebook 탭 하나(parent frame) 안에 들어가도록 구성.
-상태 변화(실행중/대기)를 헤더 배지에도 반영하도록 콜백을 받는다.
+Reuses the logic from the earlier standalone gui.py (SynthesizerGUI), but
+embedded into a frame (one tab of main_window.py's Notebook) instead of its
+own window. Reports status changes (running/idle/etc.) back to the header
+badges via callbacks.
 """
 
 import os
@@ -35,36 +36,36 @@ class SynthesisTab:
         self._build_widgets()
         self._poll_log_queue()
 
-    # ---------------- UI 구성 ----------------
+    # ---------------- UI layout ----------------
     def _build_widgets(self):
         top = ttk.Frame(self.parent, padding=10)
         top.pack(fill="x")
 
-        ttk.Label(top, text="합성 방식:").grid(row=0, column=0, sticky="w")
+        ttk.Label(top, text="Synthesis Mode:").grid(row=0, column=0, sticky="w")
         self.mode_var = tk.StringVar(value=COLUMN)
-        ttk.Radiobutton(top, text="컬럼합성", variable=self.mode_var, value=COLUMN,
+        ttk.Radiobutton(top, text="Column Synthesis", variable=self.mode_var, value=COLUMN,
                          command=self._on_mode_change).grid(row=0, column=1, sticky="w")
-        ttk.Radiobutton(top, text="DMD 어레이 합성", variable=self.mode_var, value=DMD_ARRAY,
+        ttk.Radiobutton(top, text="DMD Array Synthesis", variable=self.mode_var, value=DMD_ARRAY,
                          command=self._on_mode_change).grid(row=0, column=2, sticky="w")
 
         self.simulate_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(top, text="시뮬레이션 모드 (Mock, 하드웨어 없이 테스트)",
+        ttk.Checkbutton(top, text="Simulation Mode (Mock, test without hardware)",
                         variable=self.simulate_var, command=self._on_simulate_change
                         ).grid(row=0, column=3, padx=20, sticky="w")
 
-        # 컬럼합성용 입력
-        self.column_frame = ttk.LabelFrame(self.parent, text="컬럼합성 입력", padding=10)
+        # Column synthesis inputs
+        self.column_frame = ttk.LabelFrame(self.parent, text="Column Synthesis Input", padding=10)
         self.seq_path_var = tk.StringVar()
         self.col_protocol_dir_var = tk.StringVar()
-        self._file_row(self.column_frame, "서열 파일:", self.seq_path_var, is_dir=False)
-        self._file_row(self.column_frame, "염기별 프로토콜 폴더:", self.col_protocol_dir_var, is_dir=True)
+        self._file_row(self.column_frame, "Sequence File:", self.seq_path_var, is_dir=False)
+        self._file_row(self.column_frame, "Per-base Protocol Folder:", self.col_protocol_dir_var, is_dir=True)
 
-        # DMD 어레이용 입력
-        self.dmd_frame = ttk.LabelFrame(self.parent, text="DMD 어레이 합성 입력", padding=10)
+        # DMD array synthesis inputs
+        self.dmd_frame = ttk.LabelFrame(self.parent, text="DMD Array Synthesis Input", padding=10)
         self.seqlist_path_var = tk.StringVar()
         self.dmd_protocol_dir_var = tk.StringVar()
-        self._file_row(self.dmd_frame, "서열 목록 파일:", self.seqlist_path_var, is_dir=False)
-        self._file_row(self.dmd_frame, "DMD용 염기별 프로토콜 폴더:", self.dmd_protocol_dir_var, is_dir=True)
+        self._file_row(self.dmd_frame, "Sequence List File:", self.seqlist_path_var, is_dir=False)
+        self._file_row(self.dmd_frame, "DMD Protocol Folder:", self.dmd_protocol_dir_var, is_dir=True)
 
         params = ttk.Frame(self.dmd_frame)
         params.pack(fill="x", pady=5)
@@ -77,30 +78,30 @@ class SynthesisTab:
         self.exposure_time_var = tk.DoubleVar(value=30.0)
         self.uv_current_var = tk.DoubleVar(value=0.5)
 
-        self._num_entry(params, "DMD 가로(px):", self.pixel_w_var, 0, 0)
-        self._num_entry(params, "DMD 세로(px):", self.pixel_h_var, 0, 2)
-        self._num_entry(params, "묶음 가로:", self.bin_w_var, 1, 0)
-        self._num_entry(params, "묶음 세로:", self.bin_h_var, 1, 2)
-        self._num_entry(params, "복제횟수:", self.replicates_var, 2, 0)
-        ttk.Checkbutton(params, text="무작위 배치", variable=self.randomize_var).grid(row=2, column=2, sticky="w")
-        self._num_entry(params, "노광시간(초):", self.exposure_time_var, 3, 0)
-        self._num_entry(params, "UV 전류(A):", self.uv_current_var, 3, 2)
+        self._num_entry(params, "DMD Width (px):", self.pixel_w_var, 0, 0)
+        self._num_entry(params, "DMD Height (px):", self.pixel_h_var, 0, 2)
+        self._num_entry(params, "Bin Width:", self.bin_w_var, 1, 0)
+        self._num_entry(params, "Bin Height:", self.bin_h_var, 1, 2)
+        self._num_entry(params, "Replicates:", self.replicates_var, 2, 0)
+        ttk.Checkbutton(params, text="Randomize Placement", variable=self.randomize_var).grid(row=2, column=2, sticky="w")
+        self._num_entry(params, "Exposure Time (s):", self.exposure_time_var, 3, 0)
+        self._num_entry(params, "UV Current (A):", self.uv_current_var, 3, 2)
 
         self._on_mode_change()
         self._on_simulate_change()
 
-        # 실행 버튼
+        # Run controls
         run_frame = ttk.Frame(self.parent, padding=10)
         run_frame.pack(fill="x")
-        self.start_button = ttk.Button(run_frame, text="시작", command=self._on_start)
+        self.start_button = ttk.Button(run_frame, text="Start", command=self._on_start)
         self.start_button.pack(side="left")
-        self.stop_button = ttk.Button(run_frame, text="정지", command=self._on_stop, state="disabled")
+        self.stop_button = ttk.Button(run_frame, text="Stop", command=self._on_stop, state="disabled")
         self.stop_button.pack(side="left", padx=5)
-        self.progress_label = ttk.Label(run_frame, text="대기 중")
+        self.progress_label = ttk.Label(run_frame, text="Idle")
         self.progress_label.pack(side="left", padx=20)
 
-        # 로그 창
-        log_frame = ttk.LabelFrame(self.parent, text="진행 로그", padding=5)
+        # Log
+        log_frame = ttk.LabelFrame(self.parent, text="Execution Log", padding=5)
         log_frame.pack(fill="both", expand=True, padx=10, pady=10)
         self.log_text = tk.Text(log_frame, state="disabled", wrap="word", bg="white")
         self.log_text.pack(fill="both", expand=True)
@@ -112,7 +113,7 @@ class SynthesisTab:
         ttk.Entry(row, textvariable=var).pack(side="left", fill="x", expand=True)
         cmd = (lambda: var.set(filedialog.askdirectory() or var.get())) if is_dir else \
               (lambda: var.set(filedialog.askopenfilename() or var.get()))
-        ttk.Button(row, text="찾아보기", command=cmd).pack(side="left")
+        ttk.Button(row, text="Browse", command=cmd).pack(side="left")
 
     def _num_entry(self, parent, label, var, row, col):
         ttk.Label(parent, text=label).grid(row=row, column=col, sticky="w", padx=(0, 5))
@@ -129,7 +130,7 @@ class SynthesisTab:
     def _on_simulate_change(self):
         self.set_mode("SIMULATION" if self.simulate_var.get() else "REAL HARDWARE")
 
-    # ---------------- 로그 ----------------
+    # ---------------- logging ----------------
     def _log(self, msg):
         self.log_queue.put(msg)
 
@@ -145,12 +146,12 @@ class SynthesisTab:
             self.log_text.configure(state="disabled")
         self.root.after(100, self._poll_log_queue)
 
-    # ---------------- 실행 ----------------
+    # ---------------- execution ----------------
     def _on_start(self):
         self.stop_event.clear()
         self.start_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
-        self.progress_label.configure(text="준비 중 (장비 연결)...")
+        self.progress_label.configure(text="Preparing (connecting devices)...")
         self.set_status("RUNNING")
 
         gui_inputs = self._read_inputs()
@@ -177,21 +178,21 @@ class SynthesisTab:
     def _on_stop(self):
         self.stop_event.set()
         self.set_status("STOPPING")
-        self._log("[정지 요청됨 - 현재 스텝 끝나면 멈춥니다]")
+        self._log("[Stop requested - will halt after the current step]")
 
     def _build_steps(self, inp):
         mode = inp["mode"]
 
         if mode == COLUMN:
             if not inp["seq_path"] or not inp["col_protocol_dir"]:
-                raise ValueError("서열 파일과 프로토콜 폴더를 모두 지정해주세요.")
+                raise ValueError("Please specify both the sequence file and protocol folder.")
             steps = build_column_sequence(inp["seq_path"], inp["col_protocol_dir"])
             meta = dict(synthesis_mode=mode, sequence_path=inp["seq_path"],
                         protocol_path=inp["col_protocol_dir"])
 
         else:  # DMD_ARRAY
             if not inp["seqlist_path"] or not inp["dmd_protocol_dir"]:
-                raise ValueError("서열 목록 파일과 프로토콜 폴더를 모두 지정해주세요.")
+                raise ValueError("Please specify both the sequence list file and protocol folder.")
 
             with open(inp["seqlist_path"], encoding="utf-8-sig") as f:
                 sequence_list = [line.strip() for line in f if line.strip()]
@@ -218,8 +219,8 @@ class SynthesisTab:
         try:
             steps, meta = self._build_steps(inp)
         except Exception as e:
-            self._log(f"[입력 오류] {e}")
-            self.root.after(0, self._on_run_finished, "error")
+            self._log(f"[Input Error] {e}")
+            self.root.after(0, self._on_run_finished, "ERROR")
             return
 
         ctx = meta["ctx"]
@@ -230,7 +231,7 @@ class SynthesisTab:
             protocol_path=meta["protocol_path"],
             total_steps=len(steps),
         )
-        self._log(f"=== 실행 시작 (run_id={run_id}, 총 {len(steps)} 스텝) ===")
+        self._log(f"=== Run started (run_id={run_id}, {len(steps)} steps total) ===")
 
         status = "completed"
         final_badge = "IDLE"
@@ -239,26 +240,26 @@ class SynthesisTab:
                 if self.stop_event.is_set():
                     status = "stopped"
                     final_badge = "IDLE"
-                    self._log(f"[{i}/{len(steps)}] 사용자에 의해 정지됨")
+                    self._log(f"[{i}/{len(steps)}] Stopped by user")
                     break
                 self.root.after(0, lambda i=i, n=len(steps): self.progress_label.configure(
-                    text=f"{i}/{n} 진행 중"))
+                    text=f"{i}/{n} in progress"))
                 self._log(f"[{i}/{len(steps)}] {step}")
                 step.execute(ctx)
             else:
-                self._log("=== 전체 시퀀스 완료 ===")
+                self._log("=== Full sequence completed ===")
                 final_badge = "COMPLETED"
         except Exception as e:
             status = "failed"
             final_badge = "ERROR"
-            self._log(f"[에러] {e}")
+            self._log(f"[Error] {e}")
         finally:
             exp_log.finish(status=status)
-            self._log(f"=== 실행 종료 (상태: {status}) ===")
+            self._log(f"=== Run finished (status: {status}) ===")
             self.root.after(0, self._on_run_finished, final_badge)
 
     def _on_run_finished(self, final_badge="IDLE"):
         self.start_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
-        self.progress_label.configure(text="대기 중")
+        self.progress_label.configure(text="Idle")
         self.set_status(final_badge)

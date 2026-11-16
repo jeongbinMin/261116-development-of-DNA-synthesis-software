@@ -20,6 +20,9 @@ class MockPump:
     def stop(self):
         print(f"  [MockPump:{self.name}] 정지")
 
+    def close(self):
+        print(f"  [MockPump:{self.name}] 연결 종료")
+
 
 class MockValve:
     def __init__(self):
@@ -28,6 +31,9 @@ class MockValve:
     def switch_to_port(self, port_number: int):
         print(f"  [MockValve] {port_number}번 포트로 전환")
         self.current_port = port_number
+
+    def close(self):
+        print("  [MockValve] 연결 종료")
 
 
 class MockUVSource:
@@ -50,6 +56,9 @@ class MockUVSource:
     def is_on(self) -> bool:
         return self._on
 
+    def close(self):
+        print("  [MockUV] 연결 종료")
+
 
 class MockDMD:
     def __init__(self):
@@ -62,3 +71,6 @@ class MockDMD:
     def clear(self):
         print("  [MockDMD] 화면 끄기")
         self.current_image = None
+
+    def close(self):
+        print("  [MockDMD] 연결 종료")
