@@ -213,11 +213,72 @@ class SynthesisTab:
         self._build_progress_cards(middle)
         self._build_fluidic_path(middle)
 
-        # Log
-        log_frame = ttk.LabelFrame(self.parent, text="Execution Log", padding=5)
-        log_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        # 04/05: DMD Live Mask viewer (left) + Execution Log (right)
+        bottom = ttk.Frame(self.parent, padding=10)
+        bottom.pack(fill="both", expand=True)
+        self._build_dmd_viewer(bottom)
+
+        log_frame = ttk.LabelFrame(bottom, text="Execution Log", padding=5)
+        log_frame.pack(side="left", fill="both", expand=True, padx=(5, 0))
         self.log_text = tk.Text(log_frame, state="disabled", wrap="word", bg="white")
         self.log_text.pack(fill="both", expand=True)
+
+    def _build_dmd_viewer(self, parent):
+        self.dmd_viewer_frame = ttk.LabelFrame(parent, text="DMD Live Mask", padding=10)
+        self.dmd_viewer_frame.pack(side="left", fill="both", padx=(0, 5))
+
+        self.dmd_not_applicable_label = ttk.Label(
+            self.dmd_viewer_frame, text="Not applicable in Column Mode"
+        )
+
+        self.dmd_viewer_body = ttk.Frame(self.dmd_viewer_frame)
+
+        self.dmd_image_label = tk.Label(self.dmd_viewer_body, bg="white",
+                                         width=40, height=14)
+        self.dmd_image_label.pack()
+        self._dmd_photo = None  # PhotoImage 레퍼런스 유지용 (안 하면 GC로 사라짐)
+
+        self.dmd_info_var = tk.StringVar(value="No mask loaded")
+        ttk.Label(self.dmd_viewer_body, textvariable=self.dmd_info_var,
+                  font=("Segoe UI", 9)).pack(anchor="w", pady=(5, 0))
+
+        nav_row = ttk.Frame(self.dmd_viewer_body)
+        nav_row.pack(fill="x", pady=(5, 0))
+        ttk.Button(nav_row, text="Previous", command=lambda: self._preview_mask(-1)).pack(side="left")
+        ttk.Button(nav_row, text="Next", command=lambda: self._preview_mask(1)).pack(side="left", padx=5)
+
+        self.mask_results = []
+        self.mask_preview_index = 0
+        self._update_dmd_viewer_visibility()
+
+    def _update_dmd_viewer_visibility(self):
+        if self.mode_var.get() == COLUMN:
+            self.dmd_viewer_body.pack_forget()
+            self.dmd_not_applicable_label.pack(pady=20)
+        else:
+            self.dmd_not_applicable_label.pack_forget()
+            self.dmd_viewer_body.pack()
+
+    def _preview_mask(self, direction):
+        if not self.mask_results:
+            return
+        self.mask_preview_index = max(0, min(len(self.mask_results) - 1,
+                                              self.mask_preview_index + direction))
+        base, bmp_path = self.mask_results[self.mask_preview_index]
+        self._show_mask_image(bmp_path,
+                               f"Mask {self.mask_preview_index + 1}/{len(self.mask_results)}  "
+                               f"Base: {base}")
+
+    def _show_mask_image(self, bmp_path, info_text):
+        from PIL import Image, ImageTk
+        try:
+            img = Image.open(bmp_path)
+            img.thumbnail((280, 200))
+            self._dmd_photo = ImageTk.PhotoImage(img)
+            self.dmd_image_label.configure(image=self._dmd_photo, text="", width=280, height=200)
+        except Exception as e:
+            self.dmd_image_label.configure(image="", text=f"(failed to load image: {e})")
+        self.dmd_info_var.set(info_text)
 
     def _build_progress_cards(self, parent):
         frame = ttk.LabelFrame(parent, text="Synthesis Progress", padding=10)
@@ -303,6 +364,8 @@ class SynthesisTab:
         else:
             self.column_frame.pack_forget()
             self.dmd_frame.pack(fill="x", padx=10, pady=5)
+        if hasattr(self, "dmd_viewer_body"):
+            self._update_dmd_viewer_visibility()
 
     def _on_simulate_change(self):
         self.set_mode("SIMULATION" if self.simulate_var.get() else "REAL HARDWARE")
@@ -422,6 +485,11 @@ class SynthesisTab:
             meta = dict(synthesis_mode=mode, sequence_path=inp["seqlist_path"],
                         protocol_path=inp["dmd_protocol_dir"])
 
+            self.mask_results = mask_results
+            self.mask_preview_index = 0
+            if mask_results:
+                self._preview_mask(0)
+
         return steps, meta
 
     def _run_worker(self, steps, meta, inp):
@@ -452,6 +520,10 @@ class SynthesisTab:
                     port = cfg.VALVE_PORTS.get(step.function_name)
                     if port is not None:
                         self.root.after(0, self._highlight_valve_port, port)
+                elif isinstance(step, DmdExposeStep):
+                    info = (f"Executing  |  Exposure: {step.exposure_time_s}s  |  "
+                            f"UV: {step.uv_current_amps}A")
+                    self.root.after(0, self._show_mask_image, step.mask_path, info)
 
                 step.execute(ctx)
 
