@@ -10,6 +10,7 @@ from tkinter import ttk
 
 from synthesis_tab import SynthesisTab
 from manual_control_tab import ManualControlTab
+from system_history_tab import SystemHistoryTab
 
 BG_COLOR = "#f2f2f2"
 HEADER_BG = "#e6e6e6"
@@ -89,7 +90,7 @@ class MainWindow:
 
         self.synthesis_tab = tk.Frame(self.notebook, bg=BG_COLOR)
         self.manual_tab = tk.Frame(self.notebook, bg=BG_COLOR)
-        self.history_tab = self._make_placeholder_tab("System & History")
+        self.history_tab = tk.Frame(self.notebook, bg=BG_COLOR)
 
         self.notebook.add(self.synthesis_tab, text="Synthesis")
         self.notebook.add(self.manual_tab, text="Manual Control")
@@ -103,14 +104,7 @@ class MainWindow:
             self.manual_tab, self.root,
             set_status=self.set_status, set_mode=self.set_mode,
         )
-
-    def _make_placeholder_tab(self, name: str) -> tk.Frame:
-        frame = tk.Frame(self.notebook, bg=BG_COLOR)
-        tk.Label(
-            frame, text=f"({name} - coming soon)",
-            font=("Segoe UI", 12), fg=SUBTITLE_COLOR, bg=BG_COLOR,
-        ).place(relx=0.5, rely=0.5, anchor="center")
-        return frame
+        self.system_history_content = SystemHistoryTab(self.history_tab, self.root)
 
 
 if __name__ == "__main__":
