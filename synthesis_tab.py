@@ -7,7 +7,6 @@ own window. Reports status changes (running/idle/etc.) back to the header
 badges via callbacks.
 """
 
-import math
 import os
 import queue
 import threading
@@ -25,12 +24,8 @@ from steps import FluidStep, DmdExposeStep
 
 BG_COLOR = "#f2f2f2"
 
-PORT_TO_FUNCTION = {port: name for name, port in cfg.VALVE_PORTS.items()}
-
 VALVE_IDLE_COLOR = "#d9d9d9"
 VALVE_ACTIVE_COLOR = "#333333"
-VALVE_IDLE_TEXT = "#1a1a1a"
-VALVE_ACTIVE_TEXT = "#ffffff"
 
 
 def compute_reagent_totals(steps: list) -> dict:
@@ -309,40 +304,117 @@ class SynthesisTab:
         frame = ttk.LabelFrame(parent, text="Fluidic Path", padding=10)
         frame.pack(side="left", fill="both", expand=True, padx=(5, 0))
 
-        self.fluidic_canvas = tk.Canvas(frame, width=260, height=220, bg="white",
-                                         highlightthickness=0)
+        pump_names = list(cfg.PUMPS.keys())
+        n = len(pump_names)
+        pump_w, gap = 42, 14
+        canvas_w = max(560, 30 + n * (pump_w + gap) + 220)
+        canvas_h = 260
+        self.fluidic_canvas = tk.Canvas(frame, width=canvas_w, height=canvas_h,
+                                         bg="white", highlightthickness=0)
         self.fluidic_canvas.pack()
 
-        self.valve_nodes = {}  # port -> (oval_id, text_id)
-        cx, cy, radius = 130, 100, 75
-        for port in range(1, 13):
-            angle = (port - 1) / 12 * 2 * math.pi - math.pi / 2
-            x = cx + radius * math.cos(angle)
-            y = cy + radius * math.sin(angle)
-            r = 18
-            oval = self.fluidic_canvas.create_oval(
-                x - r, y - r, x + r, y + r, fill=VALVE_IDLE_COLOR, outline="#999999"
-            )
-            label = PORT_TO_FUNCTION.get(port, "-")
-            text = self.fluidic_canvas.create_text(
-                x, y, text=f"{port}\n{label}", font=("Segoe UI", 7), fill=VALVE_IDLE_TEXT
-            )
-            self.valve_nodes[port] = (oval, text)
+        pump_top, pump_bot = 20, 95
+        bus_y = 150
+        rv_x, rv_y, rv_r = 30 + n * (pump_w + gap) + 30, bus_y, 32
 
-        self.reagent_label = ttk.Label(frame, text="Commanded Port: none")
+        self.pump_nodes = {}      # name -> (rect_id, fill_id)
+        self.pump_lines = {}      # name -> vertical connector line id
+
+        for i, name in enumerate(pump_names):
+            x0 = 30 + i * (pump_w + gap)
+            x1 = x0 + pump_w
+            self.fluidic_canvas.create_rectangle(
+                x0, pump_top, x1, pump_bot, outline="#1a1a1a", width=2
+            )
+            fill_id = self.fluidic_canvas.create_rectangle(
+                x0 + 8, pump_top + 15, x1 - 8, pump_bot - 10,
+                fill=VALVE_IDLE_COLOR, outline=""
+            )
+            self.fluidic_canvas.create_text(
+                (x0 + x1) / 2, pump_bot + 14, text=name, font=("Segoe UI", 8)
+            )
+            line_id = self.fluidic_canvas.create_line(
+                (x0 + x1) / 2, pump_bot, (x0 + x1) / 2, bus_y, fill="#9aa5b1", width=3
+            )
+            self.pump_nodes[name] = fill_id
+            self.pump_lines[name] = line_id
+
+        bus_x0 = 30 + pump_w / 2
+        self.bus_line = self.fluidic_canvas.create_line(
+            bus_x0, bus_y, rv_x - rv_r, bus_y, fill="#9aa5b1", width=3
+        )
+
+        self.fluidic_canvas.create_oval(
+            rv_x - rv_r, rv_y - rv_r, rv_x + rv_r, rv_y + rv_r,
+            fill="#e6e6e6", outline="#1a1a1a", width=2
+        )
+        self.fluidic_canvas.create_text(rv_x, rv_y, text="RV", font=("Segoe UI", 12, "bold"))
+        self.fluidic_canvas.create_text(rv_x, rv_y + rv_r + 14, text="12-port", font=("Segoe UI", 8))
+
+        fc_x0, fc_y0 = rv_x + rv_r + 70, bus_y - 35
+        fc_x1, fc_y1 = fc_x0 + 110, bus_y + 35
+        self.rv_to_fc_line = self.fluidic_canvas.create_line(
+            rv_x + rv_r, bus_y, fc_x0, bus_y, fill="#9aa5b1", width=3
+        )
+        self.fluidic_canvas.create_rectangle(fc_x0, fc_y0, fc_x1, fc_y1,
+                                              outline="#1a1a1a", width=2)
+        self.fluidic_canvas.create_text((fc_x0 + fc_x1) / 2, bus_y,
+                                         text="FLOW\nCELL", font=("Segoe UI", 11, "bold"))
+
+        waste_x0, waste_y0 = fc_x1 + 50, bus_y + 50
+        waste_x1, waste_y1 = waste_x0 + 90, waste_y0 + 45
+        self.fc_to_waste_line = self.fluidic_canvas.create_line(
+            fc_x1, bus_y, waste_x0 + 45, bus_y, waste_x0 + 45, waste_y0,
+            fill="#9aa5b1", width=3
+        )
+        self.fluidic_canvas.create_rectangle(waste_x0, waste_y0, waste_x1, waste_y1,
+                                              outline="#1a1a1a", width=2)
+        self.fluidic_canvas.create_text((waste_x0 + waste_x1) / 2, (waste_y0 + waste_y1) / 2,
+                                         text="WASTE", font=("Segoe UI", 9))
+
+        self.flow_lines = [self.rv_to_fc_line]  # 애니메이션(점선) 대상 선들
+        self.active_pump_line = None
+        self.flow_animating = False
+        self.reagent_label = ttk.Label(frame, text="Commanded Reagent: none")
         self.reagent_label.pack(anchor="w", pady=(5, 0))
 
-    def _highlight_valve_port(self, port):
-        for p, (oval, text) in self.valve_nodes.items():
-            active = (p == port)
+    def _start_flow_animation(self, function_name):
+        for name, fill_id in self.pump_nodes.items():
             self.fluidic_canvas.itemconfigure(
-                oval, fill=VALVE_ACTIVE_COLOR if active else VALVE_IDLE_COLOR
+                fill_id, fill=VALVE_ACTIVE_COLOR if name == function_name else VALVE_IDLE_COLOR
             )
-            self.fluidic_canvas.itemconfigure(
-                text, fill=VALVE_ACTIVE_TEXT if active else VALVE_IDLE_TEXT
-            )
-        label = PORT_TO_FUNCTION.get(port, "unknown")
-        self.reagent_label.configure(text=f"Commanded Port: {port} ({label})")
+
+        self.active_pump_line = self.pump_lines.get(function_name)
+        animated = self.flow_lines + ([self.active_pump_line, self.bus_line]
+                                        if self.active_pump_line else [])
+        for line_id in animated:
+            self.fluidic_canvas.itemconfigure(line_id, dash=(6, 4))
+
+        port = cfg.VALVE_PORTS.get(function_name)
+        self.reagent_label.configure(
+            text=f"Commanded Reagent: {function_name} (port {port if port is not None else '?'})"
+        )
+
+        self.flow_animating = True
+        self._animate_flow(0)
+
+    def _animate_flow(self, offset):
+        if not self.flow_animating:
+            return
+        animated = self.flow_lines + ([self.active_pump_line, self.bus_line]
+                                        if self.active_pump_line else [])
+        for line_id in animated:
+            self.fluidic_canvas.itemconfigure(line_id, dashoffset=offset)
+        self.root.after(80, self._animate_flow, (offset + 2) % 20)
+
+    def _stop_flow_animation(self):
+        self.flow_animating = False
+        animated = self.flow_lines + ([self.active_pump_line, self.bus_line]
+                                        if self.active_pump_line else [])
+        for line_id in animated:
+            self.fluidic_canvas.itemconfigure(line_id, dash=())
+        for fill_id in self.pump_nodes.values():
+            self.fluidic_canvas.itemconfigure(fill_id, fill=VALVE_IDLE_COLOR)
 
     def _file_row(self, parent, label, var, is_dir):
         row = ttk.Frame(parent)
@@ -517,15 +589,16 @@ class SynthesisTab:
                 self._log(f"[{i}/{len(steps)}] {step}")
 
                 if isinstance(step, FluidStep):
-                    port = cfg.VALVE_PORTS.get(step.function_name)
-                    if port is not None:
-                        self.root.after(0, self._highlight_valve_port, port)
+                    self.root.after(0, self._start_flow_animation, step.function_name)
                 elif isinstance(step, DmdExposeStep):
                     info = (f"Executing  |  Exposure: {step.exposure_time_s}s  |  "
                             f"UV: {step.uv_current_amps}A")
                     self.root.after(0, self._show_mask_image, step.mask_path, info)
 
                 step.execute(ctx)
+
+                if isinstance(step, FluidStep):
+                    self.root.after(0, self._stop_flow_animation)
 
                 self.completed_duration_s += step_duration(step)
                 remaining = max(0.0, self.estimated_total_s - self.completed_duration_s)
