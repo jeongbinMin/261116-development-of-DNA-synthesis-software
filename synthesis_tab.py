@@ -255,13 +255,18 @@ class SynthesisTab:
         self._on_mode_change()
         self._on_simulate_change()
 
-        # Run controls
+        # Run controls - Play/Pause/Stop 아이콘 버튼.
+        # Pause는 하드웨어에서 "정지 후 같은 속도로 재구동"이 실제로 맞는지
+        # 검증된 다음에 연결할 예정이라, 지금은 버튼만 두고 비활성화해둠.
         run_frame = ttk.Frame(self.parent, padding=10)
         run_frame.pack(fill="x")
-        self.start_button = ttk.Button(run_frame, text="Start", command=self._on_start)
+        self.start_button = ttk.Button(run_frame, text="▶", width=3, command=self._on_start)
         self.start_button.pack(side="left")
-        self.stop_button = ttk.Button(run_frame, text="Stop", command=self._on_stop, state="disabled")
-        self.stop_button.pack(side="left", padx=5)
+        self.pause_button = ttk.Button(run_frame, text="⏸", width=3, state="disabled")
+        self.pause_button.pack(side="left", padx=5)
+        self.stop_button = ttk.Button(run_frame, text="■", width=3, command=self._on_stop,
+                                       state="disabled")
+        self.stop_button.pack(side="left")
         self.progress_label = ttk.Label(run_frame, text="Idle")
         self.progress_label.pack(side="left", padx=20)
 
@@ -347,12 +352,14 @@ class SynthesisTab:
             "estimated_total": tk.StringVar(value="-"),
             "elapsed": tk.StringVar(value="-"),
             "remaining": tk.StringVar(value="-"),
+            "finish_est": tk.StringVar(value="-"),
         }
         labels = {
             "total_steps": "Total Steps",
             "estimated_total": "Estimated Total",
             "elapsed": "Elapsed",
             "remaining": "Remaining",
+            "finish_est": "Finish (Est.)",
         }
         for i, key in enumerate(labels):
             card = ttk.Frame(frame, relief="groove", padding=8)
@@ -709,6 +716,7 @@ class SynthesisTab:
         self.card_vars["estimated_total"].set(format_duration(self.estimated_total_s))
         self.card_vars["elapsed"].set("0:00:00")
         self.card_vars["remaining"].set(format_duration(self.estimated_total_s))
+        self._set_finish_est(self.estimated_total_s)
         self._set_overall_progress(0)
         self._set_stage("Stage: Starting...")
 
@@ -725,6 +733,10 @@ class SynthesisTab:
         elapsed = time.time() - self.run_start_time
         self.card_vars["elapsed"].set(format_duration(elapsed))
         self.root.after(500, self._tick_elapsed)
+
+    def _set_finish_est(self, remaining_s):
+        """남은시간을 '지금+남은시간' 시각으로 환산해서 보여줌 (예상 종료 시각)."""
+        self.card_vars["finish_est"].set(time.strftime("%H:%M:%S", time.localtime(time.time() + remaining_s)))
 
     def _read_inputs(self):
         return dict(
@@ -836,6 +848,7 @@ class SynthesisTab:
                 self.completed_duration_s += step_duration(step)
                 remaining = max(0.0, self.estimated_total_s - self.completed_duration_s)
                 self.root.after(0, self.card_vars["remaining"].set, format_duration(remaining))
+                self.root.after(0, self._set_finish_est, remaining)
                 percent = 0 if self.estimated_total_s <= 0 else min(
                     100, 100 * self.completed_duration_s / self.estimated_total_s)
                 self.root.after(0, self._set_overall_progress, percent)

@@ -1,8 +1,8 @@
 """
-System & History tab content.
+Environment tab + System tab content.
 
-System section: read-only view of the configured hardware (devices_config.py).
-History section: table of past runs from logs/experiment_log.csv.
+Environment: read-only view of the configured hardware (devices_config.py).
+System: table of past runs from logs/experiment_log.csv.
 
 Note: this just displays devices_config.py's settings, not a live
 "currently connected" status - each tab (Synthesis/Manual Control)
@@ -19,21 +19,16 @@ import devices_config as cfg
 from experiment_log import LOG_CSV, FIELDNAMES
 
 
-class SystemHistoryTab:
+class EnvironmentTab:
+    """하드웨어 설정값(devices_config.py)을 읽기 전용으로 보여줌."""
+
     def __init__(self, parent: tk.Widget, root: tk.Tk):
         self.parent = parent
         self.root = root
-
         self._build_widgets()
-        self._refresh_history()
 
     def _build_widgets(self):
-        self._build_system_section(self.parent)
-        self._build_history_section(self.parent)
-
-    # ---------------- System ----------------
-    def _build_system_section(self, parent):
-        frame = ttk.LabelFrame(parent, text="System Configuration (devices_config.py)", padding=10)
+        frame = ttk.LabelFrame(self.parent, text="System Configuration (devices_config.py)", padding=10)
         frame.pack(fill="x", padx=10, pady=10)
 
         ttk.Label(frame, text=f"Valve: COM {cfg.VALVE_COM}, address {cfg.VALVE_ADDRESS}, "
@@ -56,10 +51,19 @@ class SystemHistoryTab:
                                             spec["plunger_mm"], valve_port))
         tree.pack(fill="x")
 
-    # ---------------- History ----------------
-    def _build_history_section(self, parent):
-        frame = ttk.LabelFrame(parent, text="Experiment History (logs/experiment_log.csv)", padding=10)
-        frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+class SystemTab:
+    """지난 합성 실행 기록(logs/experiment_log.csv)을 보여줌."""
+
+    def __init__(self, parent: tk.Widget, root: tk.Tk):
+        self.parent = parent
+        self.root = root
+        self._build_widgets()
+        self._refresh_history()
+
+    def _build_widgets(self):
+        frame = ttk.LabelFrame(self.parent, text="Experiment History (logs/experiment_log.csv)", padding=10)
+        frame.pack(fill="both", expand=True, padx=10, pady=10)
 
         toolbar = ttk.Frame(frame)
         toolbar.pack(fill="x", pady=(0, 5))

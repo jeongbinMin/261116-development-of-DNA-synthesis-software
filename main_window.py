@@ -1,7 +1,9 @@
 """
-메인 화면 기본 틀 (헤더 + 탭 3개).
+메인 화면 기본 틀 (헤더 + 왼쪽 사이드바 네비게이션 + 콘텐츠 영역).
 
-지금은 레이아웃만 잡아둔 상태. 각 탭 내용은 다음 단계에서 채운다.
+탭(ttk.Notebook) 대신 왼쪽 사이드바 버튼으로 화면을 전환하는 방식으로 변경.
+(사용자가 제공한 와이어프레임/참고 목업과 동일한 구조 - Synthesis/Manual/
+Environment/System 4개 섹션)
 색감은 스플래시와 동일하게 무채색 계열로 맞춤.
 """
 
@@ -10,7 +12,7 @@ from tkinter import ttk
 
 from synthesis_tab import SynthesisTab
 from manual_control_tab import ManualControlTab
-from system_history_tab import SystemHistoryTab
+from system_history_tab import EnvironmentTab, SystemTab
 
 BG_COLOR = "#f2f2f2"
 HEADER_BG = "#e6e6e6"
@@ -20,16 +22,22 @@ LINE_COLOR = "#bfbfbf"
 BADGE_BG = "#d9d9d9"
 BADGE_FG = "#333333"
 
+SIDEBAR_BG = "#e6e6e6"
+SIDEBAR_BTN_BG = "#d9d9d9"
+SIDEBAR_BTN_ACTIVE_BG = "#333333"
+SIDEBAR_BTN_FG = "#1a1a1a"
+SIDEBAR_BTN_ACTIVE_FG = "#ffffff"
+
 
 class MainWindow:
     def __init__(self, root: tk.Tk):
         self.root = root
         root.title("DPEG DNA Synthesizer")
-        root.geometry("1100x750")
+        root.geometry("1150x780")
         root.configure(bg=BG_COLOR)
 
         self._build_header()
-        self._build_tabs()
+        self._build_sidebar_layout()
 
     # ---------------- 헤더 ----------------
     def _build_header(self):
@@ -74,37 +82,62 @@ class MainWindow:
     def set_status(self, text: str):
         self.status_badge.configure(text=text)
 
-    # ---------------- 탭 ----------------
-    def _build_tabs(self):
-        style = ttk.Style(self.root)
-        style.theme_use(style.theme_use())
-        style.configure("Gray.TNotebook", background=BG_COLOR, borderwidth=0)
-        style.configure(
-            "Gray.TNotebook.Tab", font=("Segoe UI", 10),
-            padding=(16, 8), background=BADGE_BG, foreground=TITLE_COLOR,
-        )
-        style.map("Gray.TNotebook.Tab", background=[("selected", BG_COLOR)])
+    # ---------------- 사이드바 + 콘텐츠 ----------------
+    def _build_sidebar_layout(self):
+        body = tk.Frame(self.root, bg=BG_COLOR)
+        body.pack(fill="both", expand=True)
 
-        self.notebook = ttk.Notebook(self.root, style="Gray.TNotebook")
-        self.notebook.pack(fill="both", expand=True, padx=10, pady=10)
+        sidebar = tk.Frame(body, bg=SIDEBAR_BG, width=160)
+        sidebar.pack(side="left", fill="y")
+        sidebar.pack_propagate(False)
 
-        self.synthesis_tab = tk.Frame(self.notebook, bg=BG_COLOR)
-        self.manual_tab = tk.Frame(self.notebook, bg=BG_COLOR)
-        self.history_tab = tk.Frame(self.notebook, bg=BG_COLOR)
+        content_container = tk.Frame(body, bg=BG_COLOR)
+        content_container.pack(side="left", fill="both", expand=True, padx=10, pady=10)
 
-        self.notebook.add(self.synthesis_tab, text="Synthesis")
-        self.notebook.add(self.manual_tab, text="Manual Control")
-        self.notebook.add(self.history_tab, text="System & History")
+        self.synthesis_frame = tk.Frame(content_container, bg=BG_COLOR)
+        self.manual_frame = tk.Frame(content_container, bg=BG_COLOR)
+        self.environment_frame = tk.Frame(content_container, bg=BG_COLOR)
+        self.system_frame = tk.Frame(content_container, bg=BG_COLOR)
 
         self.synthesis_content = SynthesisTab(
-            self.synthesis_tab, self.root,
+            self.synthesis_frame, self.root,
             set_status=self.set_status, set_mode=self.set_mode,
         )
         self.manual_control_content = ManualControlTab(
-            self.manual_tab, self.root,
+            self.manual_frame, self.root,
             set_status=self.set_status, set_mode=self.set_mode,
         )
-        self.system_history_content = SystemHistoryTab(self.history_tab, self.root)
+        self.environment_content = EnvironmentTab(self.environment_frame, self.root)
+        self.system_content = SystemTab(self.system_frame, self.root)
+
+        self.nav_items = [
+            ("Synthesis", self.synthesis_frame),
+            ("Manual", self.manual_frame),
+            ("Environment", self.environment_frame),
+            ("System", self.system_frame),
+        ]
+        self.nav_buttons = {}
+        for name, frame in self.nav_items:
+            btn = tk.Label(
+                sidebar, text=name, font=("Segoe UI", 10),
+                fg=SIDEBAR_BTN_FG, bg=SIDEBAR_BTN_BG, anchor="w",
+                padx=16, pady=12, cursor="hand2",
+            )
+            btn.pack(fill="x", padx=8, pady=(8, 0))
+            btn.bind("<Button-1>", lambda e, n=name: self._show_section(n))
+            self.nav_buttons[name] = btn
+
+        self._show_section("Synthesis")
+
+    def _show_section(self, name: str):
+        for item_name, frame in self.nav_items:
+            btn = self.nav_buttons[item_name]
+            if item_name == name:
+                frame.pack(fill="both", expand=True)
+                btn.configure(bg=SIDEBAR_BTN_ACTIVE_BG, fg=SIDEBAR_BTN_ACTIVE_FG)
+            else:
+                frame.pack_forget()
+                btn.configure(bg=SIDEBAR_BTN_BG, fg=SIDEBAR_BTN_FG)
 
 
 if __name__ == "__main__":
