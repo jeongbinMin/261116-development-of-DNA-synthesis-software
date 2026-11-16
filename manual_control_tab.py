@@ -18,6 +18,7 @@ from tkinter import filedialog, ttk
 import devices_config as cfg
 from column_parser import load_monomer_protocol
 from synthesis_mode import build_context, DMD_ARRAY
+from display_names import load_display_names, save_display_names
 
 PORT_TO_FUNCTION = {port: name for name, port in cfg.VALVE_PORTS.items()}
 
@@ -109,6 +110,8 @@ class ManualControlTab:
         frame = ttk.LabelFrame(parent, text="Individual Syringe Pump", padding=10)
         frame.pack(fill="x")
 
+        self.display_names = load_display_names()
+
         row = ttk.Frame(frame)
         row.pack(fill="x", pady=2)
         ttk.Label(row, text="Pump:", width=24).pack(side="left")
@@ -118,6 +121,19 @@ class ManualControlTab:
                         command=self._on_pump_select).pack(side="left")
         self.pump_info_label = ttk.Label(row, text="")
         self.pump_info_label.pack(side="left", padx=15)
+
+        # 화면에 보여줄 이름(Synthesis 탭 Fluidic Path 등에 쓰이는 이름)을
+        # 여기서 바꾸고 Save를 눌러야 파일(display_names.json)에 저장됨.
+        # 저장된 이름은 다음 실행부터 Synthesis 탭에 반영됨.
+        name_row = ttk.Frame(frame)
+        name_row.pack(fill="x", pady=2)
+        ttk.Label(name_row, text="Display Name:", width=24).pack(side="left")
+        self.display_name_var = tk.StringVar()
+        ttk.Entry(name_row, textvariable=self.display_name_var, width=20).pack(side="left")
+        ttk.Button(name_row, text="Save", command=self._on_save_display_name).pack(side="left", padx=5)
+        self.rename_status_label = ttk.Label(name_row, text="")
+        self.rename_status_label.pack(side="left", padx=10)
+
         self._on_pump_select(self.pump_var.get())
 
         params = ttk.Frame(frame)
@@ -146,6 +162,20 @@ class ManualControlTab:
         spec = cfg.PUMPS[name]
         self.pump_info_label.configure(
             text=f"COM: {spec['com']}  |  Syringe: {spec['capacity_ul']}uL"
+        )
+        self.display_name_var.set(self.display_names.get(name, name))
+        self.rename_status_label.configure(text="")
+
+    def _on_save_display_name(self):
+        name = self.pump_var.get()
+        new_display_name = self.display_name_var.get().strip()
+        if not new_display_name:
+            self.rename_status_label.configure(text="Name cannot be empty.")
+            return
+        self.display_names[name] = new_display_name
+        save_display_names(self.display_names)
+        self.rename_status_label.configure(
+            text="Saved. Takes effect on the Synthesis tab after restart."
         )
 
     # ---------------- connection ----------------

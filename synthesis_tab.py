@@ -22,6 +22,7 @@ from dmd_array_sequence import build_dmd_array_steps
 from synthesis_mode import build_context, COLUMN, DMD_ARRAY
 from experiment_log import ExperimentLog
 from steps import FluidStep, DmdExposeStep
+from display_names import load_display_names
 
 BG_COLOR = "#f2f2f2"
 
@@ -65,14 +66,6 @@ STAGE_LABELS = {
     "a": "Couple", "t": "Couple", "g": "Couple", "c": "Couple",
 }
 
-# Function 이름(devices_config.py의 키) -> Fluidic Path에 표시할 읽기 쉬운 이름.
-# 내부 로직(valve_ports 매핑, pump 조회 등)은 전부 Function 이름 그대로 쓰고,
-# 화면 표시만 이 이름으로 바꿔치기 - 둘이 꼬이면 안 되므로 Function 이름은 유지.
-FUNCTION_DISPLAY_NAMES = {
-    "wsh": "Wash", "wsha": "Wash 2", "dblk": "Deblock", "ox": "Oxidize",
-    "aux": "Aux", "dmt": "DMT", "a": "A", "t": "T", "g": "G", "c": "C",
-    "act": "Activate", "gas": "Gas",
-}
 
 
 def step_stage_label(step) -> str:
@@ -437,6 +430,7 @@ class SynthesisTab:
         frame.pack(side="left", fill="both", expand=True, padx=(5, 0))
 
         port_to_name = {port: name for name, port in cfg.VALVE_PORTS.items()}
+        self.display_names = load_display_names()
         # 밸브 포트가 12개이므로 리스트도 12칸을 다 보여주고, 펌프가 없는 포트는
         # "Empty"로 비워서 표시 (실제로 연결 안 된 상태를 숨기지 않기 위함)
         port_numbers = list(range(1, 13))
@@ -496,9 +490,11 @@ class SynthesisTab:
                 )
                 self.fluidic_canvas.create_text(
                     (list_x0 + list_x1) / 2, cy,
-                    text=FUNCTION_DISPLAY_NAMES.get(name, name), font=("Segoe UI", 9, "bold")
+                    text=self.display_names.get(name, name), font=("Segoe UI", 9, "bold")
                 )
-                path = [(list_x1, cy), (px, py)]
+                # 리스트에서 바로 대각선으로 뻗기보다, 짧게 한 번 꺾어 나간 뒤 밸브로
+                # 들어가게 해서 부채꼴이 더 정돈되어 보이게 함
+                path = [(list_x1, cy), (list_x1 + 24, cy), (px, py)]
                 line_id = self.fluidic_canvas.create_line(
                     *[c for pt in path for c in pt], fill="#9aa5b1", width=2
                 )
@@ -515,7 +511,8 @@ class SynthesisTab:
                     text="Empty", font=("Segoe UI", 9), fill="#9aa5b1"
                 )
                 self.fluidic_canvas.create_line(
-                    list_x1, cy, px, py, fill="#d9d9d9", width=1, dash=(2, 3)
+                    list_x1, cy, list_x1 + 24, cy, px, py,
+                    fill="#d9d9d9", width=1, dash=(2, 3)
                 )
 
         # RV 몸체: 참고 이미지 스타일 - 바깥 링에 12개 눈금, 안쪽에 "12 PORT" 표시,
@@ -528,10 +525,16 @@ class SynthesisTab:
             rv_x - rv_r * 0.55, rv_y - rv_r * 0.55, rv_x + rv_r * 0.55, rv_y + rv_r * 0.55,
             fill="#e6e6e6", outline="#bfbfbf", width=1
         )
+        # 눈금은 밸브가 "반원이 아니라 전체가 둥글다"는 걸 보여주기 위해 원 전체
+        # 360도에 걸쳐 고르게(시계 숫자처럼) 찍음 - 실제 튜브 연결 각도(왼쪽 반원,
+        # 교차 없음이 검증된 배치)와는 별개의 장식용 표시. 실제 배관이 밸브 전체
+        # 둘레 중 어디에 물리적으로 연결되는지는 이 그림의 목적이 아니라서,
+        # "12개 포트가 둥글게 있다"는 사실만 정확하게 보여주면 충분하다고 판단함.
         for port_number in range(1, 13):
-            px, py = self.port_points[port_number]
-            dot_x = rv_x + (px - rv_x) * 0.97
-            dot_y = rv_y + (py - rv_y) * 0.97
+            deco_angle = 90 - (port_number - 1) * 30
+            dpx, dpy = rv_point(deco_angle)
+            dot_x = rv_x + (dpx - rv_x) * 0.97
+            dot_y = rv_y + (dpy - rv_y) * 0.97
             has_pump = port_to_name.get(port_number) in cfg.PUMPS
             self.fluidic_canvas.create_oval(
                 dot_x - 3, dot_y - 3, dot_x + 3, dot_y + 3,
@@ -595,7 +598,7 @@ class SynthesisTab:
             )
 
         port = cfg.VALVE_PORTS.get(function_name)
-        display_name = FUNCTION_DISPLAY_NAMES.get(function_name, function_name)
+        display_name = self.display_names.get(function_name, function_name)
         self.reagent_label.configure(
             text=f"Commanded Reagent: {display_name} (port {port if port is not None else '?'})"
         )
