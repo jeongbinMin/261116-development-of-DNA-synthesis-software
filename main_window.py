@@ -8,6 +8,8 @@
 import tkinter as tk
 from tkinter import ttk
 
+from synthesis_tab import SynthesisTab
+
 BG_COLOR = "#f2f2f2"
 HEADER_BG = "#e6e6e6"
 TITLE_COLOR = "#1a1a1a"
@@ -84,13 +86,18 @@ class MainWindow:
         self.notebook = ttk.Notebook(self.root, style="Gray.TNotebook")
         self.notebook.pack(fill="both", expand=True, padx=10, pady=10)
 
-        self.synthesis_tab = self._make_placeholder_tab("Synthesis")
+        self.synthesis_tab = tk.Frame(self.notebook, bg=BG_COLOR)
         self.manual_tab = self._make_placeholder_tab("Manual Control")
         self.history_tab = self._make_placeholder_tab("System & History")
 
         self.notebook.add(self.synthesis_tab, text="Synthesis")
         self.notebook.add(self.manual_tab, text="Manual Control")
         self.notebook.add(self.history_tab, text="System & History")
+
+        self.synthesis_content = SynthesisTab(
+            self.synthesis_tab, self.root,
+            set_status=self.set_status, set_mode=self.set_mode,
+        )
 
     def _make_placeholder_tab(self, name: str) -> tk.Frame:
         frame = tk.Frame(self.notebook, bg=BG_COLOR)
