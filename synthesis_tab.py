@@ -436,9 +436,11 @@ class SynthesisTab:
         frame = ttk.LabelFrame(parent, text="Fluidic Path", padding=10)
         frame.pack(side="left", fill="both", expand=True, padx=(5, 0))
 
-        pump_names = list(cfg.PUMPS.keys())
-        n = len(pump_names)
         port_to_name = {port: name for name, port in cfg.VALVE_PORTS.items()}
+        # 밸브 포트가 12개이므로 리스트도 12칸을 다 보여주고, 펌프가 없는 포트는
+        # "Empty"로 비워서 표시 (실제로 연결 안 된 상태를 숨기지 않기 위함)
+        port_numbers = list(range(1, 13))
+        n = len(port_numbers)
 
         row_h, row_gap = 30, 10
         list_x0, list_x1 = 20, 110
@@ -471,35 +473,50 @@ class SynthesisTab:
         self.pump_paths = {}      # name -> 흐름 애니메이션용 경로 좌표 리스트
         self.port_points = {}     # port number -> RV 둘레 좌표 (펌프 유무 무관, needle에 사용)
 
-        for i, name in enumerate(pump_names):
+        for i, port_number in enumerate(port_numbers):
+            name = port_to_name.get(port_number)
+            has_pump = name in cfg.PUMPS
+
             y0 = list_top + i * (row_h + row_gap)
             y1 = y0 + row_h
             cy = (y0 + y1) / 2
-            self.fluidic_canvas.create_rectangle(list_x0, y0, list_x1, y1,
-                                                  outline="#1a1a1a", width=2)
-            fill_id = self.fluidic_canvas.create_rectangle(
-                list_x0 + 3, y0 + 3, list_x1 - 3, y1 - 3,
-                fill=VALVE_IDLE_COLOR, outline=""
-            )
-            self.fluidic_canvas.create_text(
-                (list_x0 + list_x1) / 2, cy,
-                text=FUNCTION_DISPLAY_NAMES.get(name, name), font=("Segoe UI", 9, "bold")
-            )
 
-            # 리스트 순서(위->아래)와 같은 순서로, RV 왼쪽 반원을 따라(90도->180도->270도)
-            # 배치 - 90도(정위)에서 270도(정아래)까지 왼쪽(180도)을 거쳐가야
-            # 리스트가 있는 왼쪽을 향하게 되고, 선끼리도 교차하지 않음
+            # 리스트 순서(위->아래, 포트 번호 순)와 같은 순서로, RV 왼쪽 반원을 따라
+            # (90도->180도->270도) 배치 - 선끼리 교차할 수학적 이유가 없어짐
             angle = 90 + 180 * (i / (n - 1) if n > 1 else 0.5)
             px, py = rv_point(angle)
-            path = [(list_x1, cy), (px, py)]
-            line_id = self.fluidic_canvas.create_line(
-                *[c for pt in path for c in pt], fill="#9aa5b1", width=2
-            )
+            self.port_points[port_number] = (px, py)
 
-            self.pump_nodes[name] = fill_id
-            self.pump_lines[name] = line_id
-            self.pump_paths[name] = path
-            self.port_points[cfg.VALVE_PORTS[name]] = (px, py)
+            if has_pump:
+                self.fluidic_canvas.create_rectangle(list_x0, y0, list_x1, y1,
+                                                      outline="#1a1a1a", width=2)
+                fill_id = self.fluidic_canvas.create_rectangle(
+                    list_x0 + 3, y0 + 3, list_x1 - 3, y1 - 3,
+                    fill=VALVE_IDLE_COLOR, outline=""
+                )
+                self.fluidic_canvas.create_text(
+                    (list_x0 + list_x1) / 2, cy,
+                    text=FUNCTION_DISPLAY_NAMES.get(name, name), font=("Segoe UI", 9, "bold")
+                )
+                path = [(list_x1, cy), (px, py)]
+                line_id = self.fluidic_canvas.create_line(
+                    *[c for pt in path for c in pt], fill="#9aa5b1", width=2
+                )
+                self.pump_nodes[name] = fill_id
+                self.pump_lines[name] = line_id
+                self.pump_paths[name] = path
+            else:
+                # 펌프가 연결 안 된 포트 - 실선 튜브 대신 점선으로만 표시해서
+                # "존재는 하지만 실제로 연결돼 있지 않다"는 걸 구분되게 함
+                self.fluidic_canvas.create_rectangle(list_x0, y0, list_x1, y1,
+                                                      outline="#bfbfbf", width=2, dash=(3, 2))
+                self.fluidic_canvas.create_text(
+                    (list_x0 + list_x1) / 2, cy,
+                    text="Empty", font=("Segoe UI", 9), fill="#9aa5b1"
+                )
+                self.fluidic_canvas.create_line(
+                    list_x1, cy, px, py, fill="#d9d9d9", width=1, dash=(2, 3)
+                )
 
         # RV 몸체: 참고 이미지 스타일 - 바깥 링에 12개 눈금, 안쪽에 "12 PORT" 표시,
         # 중앙에서 현재 선택된 포트 쪽으로 바늘(needle)이 가리키도록 함
@@ -512,11 +529,6 @@ class SynthesisTab:
             fill="#e6e6e6", outline="#bfbfbf", width=1
         )
         for port_number in range(1, 13):
-            if port_number not in self.port_points:
-                # 펌프가 없는 포트(예: aux, gas)도 밸브에는 실제로 존재하므로,
-                # 12개 눈금을 다 보여주기 위해 전체 원 둘레에 고르게 보강해서 표시
-                deco_angle = 90 - (port_number - 1) * 30
-                self.port_points[port_number] = rv_point(deco_angle)
             px, py = self.port_points[port_number]
             dot_x = rv_x + (px - rv_x) * 0.97
             dot_y = rv_y + (py - rv_y) * 0.97
