@@ -415,17 +415,68 @@ class SynthesisTab:
     def _set_stage(self, text):
         self.stage_var.set(text)
 
+    @staticmethod
+    def _seg_intersect(p1, p2, p3, p4):
+        def ccw(a, b, c):
+            return (c[1] - a[1]) * (b[0] - a[0]) - (b[1] - a[1]) * (c[0] - a[0])
+        d1, d2 = ccw(p3, p4, p1), ccw(p3, p4, p2)
+        d3, d4 = ccw(p1, p2, p3), ccw(p1, p2, p4)
+        return ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0))
+
+    @classmethod
+    def _route_list_to_targets(cls, rows_cy, targets, list_x1, outer_x):
+        """리스트의 각 행(rows_cy)에서 밸브 둘레의 정확한 목표 지점(targets)까지,
+        선끼리 겹치지 않게 경로를 계산.
+
+        목표 지점들이 원 전체(360도)에 퍼져 있으면, 리스트는 일자로 쭉 뻗어
+        있어서 순서를 아무리 잘 맞춰도 수학적으로 1~2곳에서는 교차가 생길
+        수밖에 없다(원형과 직선을 겹침 없이 완전히 대응시킬 수 없다는 위상
+        수학적 한계). 그래서 직선으로 먼저 다 그어본 뒤, 교차가 생긴 선만
+        밸브 바깥쪽(outer_x)으로 크게 돌아가게 다시 그려서 실제로 교차가
+        없어질 때까지 반복한다."""
+        n = len(rows_cy)
+        paths = [[(list_x1, rows_cy[i]), targets[i]] for i in range(n)]
+
+        def find_crossing():
+            segs = []
+            for idx, p in enumerate(paths):
+                for k in range(len(p) - 1):
+                    segs.append((p[k], p[k + 1], idx))
+            for i in range(len(segs)):
+                for j in range(i + 1, len(segs)):
+                    if segs[i][2] == segs[j][2]:
+                        continue
+                    if cls._seg_intersect(segs[i][0], segs[i][1], segs[j][0], segs[j][1]):
+                        return segs[i][2], segs[j][2]
+            return None
+
+        def detour(idx):
+            cy = rows_cy[idx]
+            tx, ty = targets[idx]
+            paths[idx] = [(list_x1, cy), (outer_x, cy), (outer_x, ty), (tx, ty)]
+
+        detoured = set()
+        for _ in range(n * 2):
+            pair = find_crossing()
+            if pair is None:
+                break
+            i, j = pair
+            target_idx = i if i not in detoured else j
+            detour(target_idx)
+            detoured.add(target_idx)
+        return paths
+
     def _build_fluidic_path(self, parent):
         """RV(12-port 밸브)는 포트마다 독립된 라인을 갖고, 그 중 하나가 선택되면
         안에서 공용 출구 하나로 합쳐져 Flow Cell로 나간다 (실제 로터리밸브 구조).
         그래서 펌프->RV 구간은 포트별로 완전히 분리된 선으로 그리고, RV->Flow Cell
         구간만 공용선 하나로 그린다.
 
-        참고 목업처럼 시약들을 세로 한 줄 리스트로 배치함. 전부 같은 x좌표(한 줄)에
-        위에서 아래로 늘어서 있고, RV 포트 위치도 위(90도)에서 아래(270도)까지
-        같은 순서로 배치하기 때문에, 선들이 수학적으로 교차할 수가 없음(두 점
-        수열을 같은 순서로 이으면 교차하지 않는다는 원리 - 이전의 2줄 배치보다
-        훨씬 단순하고 확실함)."""
+        밸브는 실제로 전체가 둥글게 12포트이므로, 각 포트의 위치(문 그림의
+        눈금)와 거기로 들어가는 튜브가 정확히 같은 좌표를 쓴다(장식용 눈금
+        따로, 튜브 따로였던 이전 버전과 다름). 포트 번호 순서대로 시계
+        방향으로 원 전체에 고르게 배치하고, 리스트에서 거기까지 가는 선은
+        _route_list_to_targets()가 교차 없이 계산한다."""
         frame = ttk.LabelFrame(parent, text="Fluidic Path", padding=10)
         frame.pack(side="left", fill="both", expand=True, padx=(5, 0))
 
@@ -441,10 +492,11 @@ class SynthesisTab:
         list_top = 20
         list_bottom = list_top + n * row_h + (n - 1) * row_gap
 
-        rv_x = list_x1 + 140
+        rv_x = list_x1 + 170
         rv_r = 55
         rv_y = (list_top + list_bottom) / 2   # RV를 리스트 세로 한가운데에 배치
-        fc_x0 = rv_x + rv_r + 70
+        outer_x = rv_x + rv_r + 30            # 교차 회피용 우회 경로가 지나가는 바깥쪽 x
+        fc_x0 = outer_x + 40
         fc_x1 = fc_x0 + 110
         waste_x0 = fc_x1 + 50
         waste_x1 = waste_x0 + 90
@@ -462,24 +514,30 @@ class SynthesisTab:
             angle = math.radians(angle_deg)
             return rv_x + rv_r * math.cos(angle), rv_y - rv_r * math.sin(angle)
 
+        # 포트 번호 순서대로 시계방향, 원 전체(360도)에 고르게 배치 - 눈금과
+        # 튜브 목표 지점이 완전히 같은 좌표(이 dict 하나만 씀).
+        # 시작 각도 15도는 임의로 고른 게 아니라, 지금 리스트/밸브 크기 조합에서
+        # _route_list_to_targets()의 우회로만으로 교차가 완전히 0이 되는 값을
+        # 찾아서 고정한 것 (다른 각도는 교차가 안 없어지는 경우가 있었음).
+        self.port_points = {p: rv_point(15 + (p - 1) * 30) for p in port_numbers}
+        # 공용 출구(밸브->Flow Cell)는 어느 포트와도 겹치지 않는 포트 12-1 사이 틈으로
+        outlet_point = rv_point(0)
+
+        rows_cy = [list_top + i * (row_h + row_gap) + row_h / 2 for i in range(n)]
+        targets = [self.port_points[p] for p in port_numbers]
+        routed_paths = self._route_list_to_targets(rows_cy, targets, list_x1, outer_x)
+
         self.pump_nodes = {}      # name -> fill_id
         self.pump_lines = {}      # name -> 연결선 캔버스 id (디버깅/참조용)
         self.pump_paths = {}      # name -> 흐름 애니메이션용 경로 좌표 리스트
-        self.port_points = {}     # port number -> RV 둘레 좌표 (펌프 유무 무관, needle에 사용)
 
         for i, port_number in enumerate(port_numbers):
             name = port_to_name.get(port_number)
             has_pump = name in cfg.PUMPS
-
             y0 = list_top + i * (row_h + row_gap)
             y1 = y0 + row_h
-            cy = (y0 + y1) / 2
-
-            # 리스트 순서(위->아래, 포트 번호 순)와 같은 순서로, RV 왼쪽 반원을 따라
-            # (90도->180도->270도) 배치 - 선끼리 교차할 수학적 이유가 없어짐
-            angle = 90 + 180 * (i / (n - 1) if n > 1 else 0.5)
-            px, py = rv_point(angle)
-            self.port_points[port_number] = (px, py)
+            cy = rows_cy[i]
+            path = routed_paths[i]
 
             if has_pump:
                 self.fluidic_canvas.create_rectangle(list_x0, y0, list_x1, y1,
@@ -492,9 +550,6 @@ class SynthesisTab:
                     (list_x0 + list_x1) / 2, cy,
                     text=self.display_names.get(name, name), font=("Segoe UI", 9, "bold")
                 )
-                # 리스트에서 바로 대각선으로 뻗기보다, 짧게 한 번 꺾어 나간 뒤 밸브로
-                # 들어가게 해서 부채꼴이 더 정돈되어 보이게 함
-                path = [(list_x1, cy), (list_x1 + 24, cy), (px, py)]
                 line_id = self.fluidic_canvas.create_line(
                     *[c for pt in path for c in pt], fill="#9aa5b1", width=2
                 )
@@ -511,12 +566,12 @@ class SynthesisTab:
                     text="Empty", font=("Segoe UI", 9), fill="#9aa5b1"
                 )
                 self.fluidic_canvas.create_line(
-                    list_x1, cy, list_x1 + 24, cy, px, py,
-                    fill="#d9d9d9", width=1, dash=(2, 3)
+                    *[c for pt in path for c in pt], fill="#d9d9d9", width=1, dash=(2, 3)
                 )
 
         # RV 몸체: 참고 이미지 스타일 - 바깥 링에 12개 눈금, 안쪽에 "12 PORT" 표시,
-        # 중앙에서 현재 선택된 포트 쪽으로 바늘(needle)이 가리키도록 함
+        # 중앙에서 현재 선택된 포트 쪽으로 바늘(needle)이 가리키도록 함.
+        # 눈금 좌표 = self.port_points 그대로라서, 튜브가 닿는 자리와 눈금이 정확히 일치함.
         self.fluidic_canvas.create_oval(
             rv_x - rv_r, rv_y - rv_r, rv_x + rv_r, rv_y + rv_r,
             fill="#f0f0f0", outline="#1a1a1a", width=2
@@ -525,16 +580,9 @@ class SynthesisTab:
             rv_x - rv_r * 0.55, rv_y - rv_r * 0.55, rv_x + rv_r * 0.55, rv_y + rv_r * 0.55,
             fill="#e6e6e6", outline="#bfbfbf", width=1
         )
-        # 눈금은 밸브가 "반원이 아니라 전체가 둥글다"는 걸 보여주기 위해 원 전체
-        # 360도에 걸쳐 고르게(시계 숫자처럼) 찍음 - 실제 튜브 연결 각도(왼쪽 반원,
-        # 교차 없음이 검증된 배치)와는 별개의 장식용 표시. 실제 배관이 밸브 전체
-        # 둘레 중 어디에 물리적으로 연결되는지는 이 그림의 목적이 아니라서,
-        # "12개 포트가 둥글게 있다"는 사실만 정확하게 보여주면 충분하다고 판단함.
-        for port_number in range(1, 13):
-            deco_angle = 90 - (port_number - 1) * 30
-            dpx, dpy = rv_point(deco_angle)
-            dot_x = rv_x + (dpx - rv_x) * 0.97
-            dot_y = rv_y + (dpy - rv_y) * 0.97
+        for port_number, (px, py) in self.port_points.items():
+            dot_x = rv_x + (px - rv_x) * 0.97
+            dot_y = rv_y + (py - rv_y) * 0.97
             has_pump = port_to_name.get(port_number) in cfg.PUMPS
             self.fluidic_canvas.create_oval(
                 dot_x - 3, dot_y - 3, dot_x + 3, dot_y + 3,
@@ -546,9 +594,9 @@ class SynthesisTab:
         )
 
         fc_y0, fc_y1 = rv_y - 35, rv_y + 35
-        self.common_flow_path = [(rv_x + rv_r, rv_y), (fc_x0, rv_y)]
+        self.common_flow_path = [outlet_point, (fc_x0, rv_y)]
         self.rv_to_fc_line = self.fluidic_canvas.create_line(
-            rv_x + rv_r, rv_y, fc_x0, rv_y, fill="#9aa5b1", width=3
+            outlet_point[0], outlet_point[1], fc_x0, rv_y, fill="#9aa5b1", width=3
         )
         self.fluidic_canvas.create_rectangle(fc_x0, fc_y0, fc_x1, fc_y1,
                                               outline="#1a1a1a", width=2)
