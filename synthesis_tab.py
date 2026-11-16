@@ -254,25 +254,8 @@ class SynthesisTab:
         self.progress_label = ttk.Label(run_frame, text="Idle")
         self.progress_label.pack(side="left", padx=20)
 
-        # Overall progress bar (스플래시와 동일한 무채색 스타일 재사용)
-        progress_bar_frame = ttk.Frame(self.parent, padding=(10, 0, 10, 10))
-        progress_bar_frame.pack(fill="x")
-        style = ttk.Style()
-        style.configure(
-            "Gray.Horizontal.TProgressbar",
-            troughcolor=BG_COLOR, background="#4d4d4d",
-            bordercolor="#bfbfbf", lightcolor="#4d4d4d", darkcolor="#4d4d4d",
-        )
-        self.overall_progress = ttk.Progressbar(
-            progress_bar_frame, style="Gray.Horizontal.TProgressbar",
-            orient="horizontal", mode="determinate", maximum=100, value=0,
-        )
-        self.overall_progress.pack(side="left", fill="x", expand=True)
-        self.overall_progress_label = ttk.Label(progress_bar_frame, text="0%", width=5)
-        self.overall_progress_label.pack(side="left", padx=(8, 0))
-
-        # Cycle step cards (current cycle's stages, highlighted as they run)
-        self._build_cycle_cards(self.parent)
+        # Overall progress ring (%) + current stage, right below it
+        self._build_progress_ring(self.parent)
 
         # 02/03: Progress info cards (left) + Fluidic Path diagram (right)
         middle = ttk.Frame(self.parent, padding=10)
@@ -372,75 +355,84 @@ class SynthesisTab:
         frame.grid_columnconfigure(0, weight=1)
         frame.grid_columnconfigure(1, weight=1)
 
-    def _build_cycle_cards(self, parent):
-        style = ttk.Style()
-        style.configure("CycleActive.TFrame", background=VALVE_ACTIVE_COLOR)
-        style.configure("CycleActive.TLabel", background=VALVE_ACTIVE_COLOR, foreground="#ffffff")
+    def _build_progress_ring(self, parent):
+        """원형 진행률(%) 표시 + 그 아래 현재 단계/사이클 텍스트.
+        카드 그리드 방식은 너무 요란해 보여서, 작은 텍스트 한 줄로 단순화."""
+        frame = ttk.Frame(parent, padding=(10, 0, 10, 10))
+        frame.pack()
 
-        self.cycle_frame = ttk.LabelFrame(parent, text="Synthesis Cycle", padding=10)
-        self.cycle_frame.pack(fill="x")
+        ring_size, ring_width = 130, 14
+        pad = ring_width / 2 + 2
+        self.ring_canvas = tk.Canvas(frame, width=ring_size, height=ring_size,
+                                      bg=BG_COLOR, highlightthickness=0)
+        self.ring_canvas.pack()
+        bbox = (pad, pad, ring_size - pad, ring_size - pad)
 
-        self.cycle_label_var = tk.StringVar(value="No run started yet")
-        ttk.Label(self.cycle_frame, textvariable=self.cycle_label_var,
-                  font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 6))
+        # 배경 트랙(항상 전체 원)
+        self.ring_canvas.create_arc(
+            bbox, start=90, extent=359.9, style="arc",
+            outline="#d9d9d9", width=ring_width
+        )
+        # 진행률 아크 - extent만 매번 갱신
+        self.ring_arc_id = self.ring_canvas.create_arc(
+            bbox, start=90, extent=0, style="arc",
+            outline="#333333", width=ring_width
+        )
+        self.ring_text_id = self.ring_canvas.create_text(
+            ring_size / 2, ring_size / 2, text="0%", font=("Segoe UI", 18, "bold")
+        )
 
-        self.cycle_cards_row = ttk.Frame(self.cycle_frame)
-        self.cycle_cards_row.pack(fill="x")
+        self.stage_var = tk.StringVar(value="Stage: Idle")
+        ttk.Label(frame, textvariable=self.stage_var, font=("Segoe UI", 10)).pack(pady=(6, 0))
 
-        self.cycle_card_widgets = []   # list of (card_frame, label_widget)
         self.cycle_template_len = 0
         self.cycle_total_cycles = 1
+        self.cycle_stage_labels = []
 
-    def _render_cycle_cards(self, labels):
-        """현재 런의 사이클 템플릿(labels)에 맞춰 카드를 다시 그림.
-        모드/프로토콜이 바뀔 수 있으므로 매 런마다 새로 그림.
-        실제 프로토콜 CSV 스텝 수에 따라 카드 개수가 많아질 수 있어(예: 20개 이상),
-        한 줄에 다 안 들어갈 경우를 대비해 그리드로 줄바꿈."""
-        for card, _ in self.cycle_card_widgets:
-            card.destroy()
-        self.cycle_card_widgets = []
+    def _set_overall_progress(self, percent):
+        extent = -(percent / 100) * 359.9  # 시계방향(위에서 출발)으로 채워지도록 음수 extent
+        self.ring_canvas.itemconfigure(self.ring_arc_id, extent=extent)
+        self.ring_canvas.itemconfigure(self.ring_text_id, text=f"{int(percent)}%")
 
-        cards_per_row = 10
-        for i, label in enumerate(labels):
-            card = ttk.Frame(self.cycle_cards_row, relief="groove", padding=(10, 6))
-            card.grid(row=i // cards_per_row, column=i % cards_per_row, padx=4, pady=4, sticky="nsew")
-            lbl = ttk.Label(card, text=label, font=("Segoe UI", 9, "bold"))
-            lbl.pack()
-            self.cycle_card_widgets.append((card, lbl))
-
-    def _highlight_cycle_card(self, position, cycle_index, total_cycles):
-        for i, (card, lbl) in enumerate(self.cycle_card_widgets):
-            active = (i == position)
-            card.configure(style="CycleActive.TFrame" if active else "TFrame")
-            lbl.configure(style="CycleActive.TLabel" if active else "TLabel")
-        self.cycle_label_var.set(f"Cycle {cycle_index + 1} / {total_cycles}")
+    def _set_stage(self, text):
+        self.stage_var.set(text)
 
     def _build_fluidic_path(self, parent):
         frame = ttk.LabelFrame(parent, text="Fluidic Path", padding=10)
         frame.pack(side="left", fill="both", expand=True, padx=(5, 0))
 
-        # 펌프가 많아지면(최대 12개) 가로로 한 줄에 다 못 들어가므로,
-        # 한 줄에 최대 6개까지만 놓고 나머지는 아래 줄로 내려 폭을 줄인다.
+        # 펌프가 많아지면(최대 12개) 가로로 한 줄에 다 못 들어가므로 2줄로 나눈다.
+        # 6/2 처럼 한쪽으로 쏠리지 않게, 항상 절반씩 나눠서 균형 있게 배치.
         pump_names = list(cfg.PUMPS.keys())
-        row_cap = 6
-        top_pumps = pump_names[:row_cap]
-        bottom_pumps = pump_names[row_cap:]
+        n = len(pump_names)
+        top_count = (n + 1) // 2
+        top_pumps = pump_names[:top_count]
+        bottom_pumps = pump_names[top_count:]
         columns = max(len(top_pumps), len(bottom_pumps), 1)
 
         pump_w, gap = 42, 14
         grid_left = 30
-        canvas_w = grid_left + columns * (pump_w + gap) + 220
-        top_y0, top_y1 = 20, 85          # 위쪽 줄 펌프 박스
-        bus_y = 160                       # 공용 버스 라인 (위/아래 줄 사이)
-        bot_y0, bot_y1 = bus_y + 55, bus_y + 120  # 아래쪽 줄 펌프 박스
-        canvas_h = bot_y1 + 30 if bottom_pumps else bus_y + 100
+        top_y0, top_y1 = 35, 95           # 위쪽 줄 펌프 박스 (라벨은 이 위에 표시)
+        bus_y = 165                        # 공용 버스 라인 (위/아래 줄 사이)
+        bot_y0, bot_y1 = bus_y + 65, bus_y + 125  # 아래쪽 줄 펌프 박스 (라벨은 이 아래 표시)
+
+        # RV/FlowCell/Waste까지 포함한 실제 필요 폭을 먼저 계산 (이전엔 이 부분이
+        # 과소평가되어 있어서 Flow Cell/Waste가 캔버스 밖으로 잘렸었음)
+        rv_x = grid_left + columns * (pump_w + gap) + 30
+        rv_r = 32
+        fc_x0 = rv_x + rv_r + 70
+        fc_x1 = fc_x0 + 110
+        waste_x0 = fc_x1 + 50
+        waste_x1 = waste_x0 + 90
+
+        canvas_w = waste_x1 + 20
+        canvas_h = (bot_y1 + 30) if bottom_pumps else (bus_y + 100)
 
         self.fluidic_canvas = tk.Canvas(frame, width=canvas_w, height=canvas_h,
                                          bg="white", highlightthickness=0)
         self.fluidic_canvas.pack()
 
-        rv_x = grid_left + columns * (pump_w + gap) + 30
-        rv_y, rv_r = bus_y, 32
+        rv_y = bus_y
 
         self.pump_nodes = {}      # name -> fill_id
         self.pump_lines = {}      # name -> vertical connector line id
@@ -453,12 +445,14 @@ class SynthesisTab:
                 x0 + 8, box_y0 + 8, x1 - 8, box_y1 - 8,
                 fill=VALVE_IDLE_COLOR, outline=""
             )
-            self.fluidic_canvas.create_text(
-                (x0 + x1) / 2, label_y, text=name, font=("Segoe UI", 8)
-            )
             cx = (x0 + x1) / 2
+            # 연결선을 먼저 그리고 그 위에 라벨 텍스트를 그려서, 라벨이 항상
+            # 선보다 위(연결선과 안 겹치는 바깥쪽)에 보이도록 함
             line_id = self.fluidic_canvas.create_line(
                 cx, connect_to_bus[0], cx, connect_to_bus[1], fill="#9aa5b1", width=3
+            )
+            self.fluidic_canvas.create_text(
+                cx, label_y, text=name, font=("Segoe UI", 8)
             )
             self.pump_nodes[name] = fill_id
             self.pump_lines[name] = line_id
@@ -466,12 +460,14 @@ class SynthesisTab:
         for i, name in enumerate(top_pumps):
             x0 = grid_left + i * (pump_w + gap)
             x1 = x0 + pump_w
-            draw_pump(name, x0, x1, top_y0, top_y1, top_y1 + 14, (top_y1, bus_y))
+            # 위쪽 줄: 연결선은 박스 아래(top_y1)에서 버스 라인까지, 라벨은 박스 위쪽에
+            draw_pump(name, x0, x1, top_y0, top_y1, top_y0 - 12, (top_y1, bus_y))
 
         for i, name in enumerate(bottom_pumps):
             x0 = grid_left + i * (pump_w + gap)
             x1 = x0 + pump_w
-            draw_pump(name, x0, x1, bot_y0, bot_y1, bot_y0 - 10, (bot_y0, bus_y))
+            # 아래쪽 줄: 연결선은 박스 위(bot_y0)에서 버스 라인까지, 라벨은 박스 아래쪽에
+            draw_pump(name, x0, x1, bot_y0, bot_y1, bot_y1 + 14, (bot_y0, bus_y))
 
         bus_x0 = grid_left + pump_w / 2
         self.bus_line = self.fluidic_canvas.create_line(
@@ -485,8 +481,7 @@ class SynthesisTab:
         self.fluidic_canvas.create_text(rv_x, rv_y, text="RV", font=("Segoe UI", 12, "bold"))
         self.fluidic_canvas.create_text(rv_x, rv_y + rv_r + 14, text="12-port", font=("Segoe UI", 8))
 
-        fc_x0, fc_y0 = rv_x + rv_r + 70, bus_y - 35
-        fc_x1, fc_y1 = fc_x0 + 110, bus_y + 35
+        fc_y0, fc_y1 = bus_y - 35, bus_y + 35
         self.rv_to_fc_line = self.fluidic_canvas.create_line(
             rv_x + rv_r, bus_y, fc_x0, bus_y, fill="#9aa5b1", width=3
         )
@@ -495,8 +490,7 @@ class SynthesisTab:
         self.fluidic_canvas.create_text((fc_x0 + fc_x1) / 2, bus_y,
                                          text="FLOW\nCELL", font=("Segoe UI", 11, "bold"))
 
-        waste_x0, waste_y0 = fc_x1 + 50, bus_y + 50
-        waste_x1, waste_y1 = waste_x0 + 90, waste_y0 + 45
+        waste_y0, waste_y1 = bus_y + 50, bus_y + 95
         self.fc_to_waste_line = self.fluidic_canvas.create_line(
             fc_x1, bus_y, waste_x0 + 45, bus_y, waste_x0 + 45, waste_y0,
             fill="#9aa5b1", width=3
@@ -623,8 +617,8 @@ class SynthesisTab:
         self.card_vars["estimated_total"].set(format_duration(self.estimated_total_s))
         self.card_vars["elapsed"].set("0:00:00")
         self.card_vars["remaining"].set(format_duration(self.estimated_total_s))
-        self.overall_progress["value"] = 0
-        self.overall_progress_label.configure(text="0%")
+        self._set_overall_progress(0)
+        self._set_stage("Stage: Starting...")
 
         self._tick_elapsed()
 
@@ -639,10 +633,6 @@ class SynthesisTab:
         elapsed = time.time() - self.run_start_time
         self.card_vars["elapsed"].set(format_duration(elapsed))
         self.root.after(500, self._tick_elapsed)
-
-    def _set_overall_progress(self, percent):
-        self.overall_progress["value"] = percent
-        self.overall_progress_label.configure(text=f"{int(percent)}%")
 
     def _read_inputs(self):
         return dict(
@@ -703,7 +693,7 @@ class SynthesisTab:
                 self._preview_mask(0)
 
         self.cycle_template_len, self.cycle_total_cycles = compute_cycle_template(steps, inp)
-        self._render_cycle_cards([step_stage_label(s) for s in steps[:self.cycle_template_len]])
+        self.cycle_stage_labels = [step_stage_label(s) for s in steps[:self.cycle_template_len]]
 
         return steps, meta
 
@@ -734,8 +724,10 @@ class SynthesisTab:
                 template_len = max(1, self.cycle_template_len)
                 position = (i - 1) % template_len
                 cycle_index = (i - 1) // template_len
-                self.root.after(0, self._highlight_cycle_card,
-                                 position, cycle_index, self.cycle_total_cycles)
+                stage_label = (self.cycle_stage_labels[position]
+                               if position < len(self.cycle_stage_labels) else step_stage_label(step))
+                stage_text = f"Stage: {stage_label}   (Cycle {cycle_index + 1}/{self.cycle_total_cycles})"
+                self.root.after(0, self._set_stage, stage_text)
 
                 if isinstance(step, FluidStep):
                     self.root.after(0, self._start_flow_animation, step.function_name)
@@ -775,3 +767,6 @@ class SynthesisTab:
         self.set_status(final_badge)
         if final_badge == "COMPLETED":
             self._set_overall_progress(100)
+            self._set_stage("Stage: Completed")
+        elif final_badge == "ERROR":
+            self._set_stage("Stage: Error")
