@@ -5,6 +5,11 @@
 
 import time
 
+# Mock 모드에서 스텝 하나(유체 토출)를 화면으로 확인할 수 있게 유지하는 최소 시간(초).
+# 실제 Pump는 time_s만큼 블로킹하지만, MockPump는 원래 전혀 대기하지 않아서
+# GUI의 Fluidic Path 애니메이션이 순간적으로 지나가 눈으로 보기 어려웠음.
+MOCK_STEP_DELAY_S = 3.0
+
 
 class MockPump:
     def __init__(self, name: str, capacity_ul: float = 100000, plunger_mm: float = 123):
@@ -15,7 +20,9 @@ class MockPump:
     def dispense(self, amount_ul: float, time_s: float, wait: bool = True):
         speed = (amount_ul / self.capacity_ul) * self.plunger_mm * 60 / time_s
         print(f"  [MockPump:{self.name}] {amount_ul}uL / {time_s}s "
-              f"(속도 {speed:.2f}mm/min) 구동 (실제로는 {time_s}s 대기)")
+              f"(속도 {speed:.2f}mm/min) 구동 (실제로는 {time_s}s 대기, Mock은 {MOCK_STEP_DELAY_S}s 대기)")
+        if wait:
+            time.sleep(MOCK_STEP_DELAY_S)
 
     def stop(self):
         print(f"  [MockPump:{self.name}] 정지")
