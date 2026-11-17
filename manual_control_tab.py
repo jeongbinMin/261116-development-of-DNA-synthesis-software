@@ -85,22 +85,33 @@ class ManualControlTab:
 
         self.display_names = load_display_names()
 
-        row = ttk.Frame(frame)
-        row.pack(fill="x", pady=2)
-        ttk.Label(row, text="Pump:", width=24).pack(side="left")
+        # 예전엔 줄마다 따로 ttk.Frame + pack(side="left")을 썼는데, 라벨
+        # 폭을 줄마다 다르게(width=24 또는 지정 안 함) 줘서 행마다 입력칸이
+        # 시작하는 x 위치가 제각각이었음("Pump:"/"Display Name:"은
+        # width=24라 맞았지만 "Dispense Volume (uL):"는 그보다 길어서
+        # 더 오른쪽에서 시작 - 그래서 중구난방으로 보였던 것).
+        # 전부 하나의 grid로 묶어서 0번 열(라벨)의 폭을 grid가 자동으로
+        # 제일 긴 라벨 기준으로 맞추게 하면, 입력칸 시작 위치가 모든 줄에서
+        # 정확히 일치함.
+        grid = ttk.Frame(frame)
+        grid.pack(fill="x")
+
+        ttk.Label(grid, text="Pump:").grid(row=0, column=0, sticky="w", pady=4)
+        pump_row = ttk.Frame(grid)
+        pump_row.grid(row=0, column=1, sticky="w", pady=4)
         self.pump_var = tk.StringVar(value=next(iter(cfg.PUMPS), ""))
         pump_names = list(cfg.PUMPS.keys())
-        ttk.OptionMenu(row, self.pump_var, self.pump_var.get(), *pump_names,
+        ttk.OptionMenu(pump_row, self.pump_var, self.pump_var.get(), *pump_names,
                         command=self._on_pump_select).pack(side="left")
-        self.pump_info_label = ttk.Label(row, text="")
+        self.pump_info_label = ttk.Label(pump_row, text="")
         self.pump_info_label.pack(side="left", padx=15)
 
         # 화면에 보여줄 이름(Synthesis 탭 Fluidic Path 등에 쓰이는 이름)을
         # 여기서 바꾸고 Save를 눌러야 파일(display_names.json)에 저장됨.
         # 저장된 이름은 다음 실행부터 Synthesis 탭에 반영됨.
-        name_row = ttk.Frame(frame)
-        name_row.pack(fill="x", pady=2)
-        ttk.Label(name_row, text="Display Name:", width=24).pack(side="left")
+        ttk.Label(grid, text="Display Name:").grid(row=1, column=0, sticky="w", pady=4)
+        name_row = ttk.Frame(grid)
+        name_row.grid(row=1, column=1, sticky="w", pady=4)
         self.display_name_var = tk.StringVar()
         ttk.Entry(name_row, textvariable=self.display_name_var, width=20).pack(side="left")
         ttk.Button(name_row, text="Save", command=self._on_save_display_name).pack(side="left", padx=5)
@@ -109,17 +120,18 @@ class ManualControlTab:
 
         self._on_pump_select(self.pump_var.get())
 
-        params = ttk.Frame(frame)
-        params.pack(fill="x", pady=5)
+        ttk.Label(grid, text="Dispense Volume (uL):").grid(row=2, column=0, sticky="w", pady=4)
+        params = ttk.Frame(grid)
+        params.grid(row=2, column=1, sticky="w", pady=4)
         self.volume_var = tk.DoubleVar(value=100.0)
         self.rate_var = tk.DoubleVar(value=50.0)
-        ttk.Label(params, text="Dispense Volume (uL):").grid(row=0, column=0, sticky="w")
-        ttk.Entry(params, textvariable=self.volume_var, width=10).grid(row=0, column=1, padx=(5, 20))
-        ttk.Label(params, text="Flow Rate (uL/s):").grid(row=0, column=2, sticky="w")
-        ttk.Entry(params, textvariable=self.rate_var, width=10).grid(row=0, column=3, padx=5)
+        ttk.Entry(params, textvariable=self.volume_var, width=10).pack(side="left")
+        ttk.Label(params, text="Flow Rate (uL/s):").pack(side="left", padx=(20, 5))
+        ttk.Entry(params, textvariable=self.rate_var, width=10).pack(side="left")
 
-        btn_row = ttk.Frame(frame)
-        btn_row.pack(fill="x", pady=5)
+        ttk.Label(grid, text="").grid(row=3, column=0, sticky="w", pady=4)
+        btn_row = ttk.Frame(grid)
+        btn_row.grid(row=3, column=1, sticky="w", pady=4)
         self.dispense_button = ttk.Button(btn_row, text="Dispense", command=self._on_dispense,
                                            state="disabled")
         self.dispense_button.pack(side="left")
