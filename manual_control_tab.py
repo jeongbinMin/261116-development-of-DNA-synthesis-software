@@ -1,9 +1,9 @@
 """
 Manual Control tab content.
 
-Lets the user directly operate the valve and individual pumps, and run a
-Prime protocol (a single CSV, same Function/amount/time/des format as the
-per-base protocol files) - outside of an automated synthesis run.
+Lets the user directly operate the valve and individual pumps, outside of
+an automated synthesis run. Prime (CSV or Auto Prime) now lives in its own
+PrimeDialog, opened from the Synthesis tab - no need to duplicate it here.
 
 Honesty note: only exposes operations the backend actually supports.
 Pump.py has no refill() method, so "Refill" is shown disabled rather than
@@ -13,10 +13,9 @@ reason (no verified instant-stop guarantee from the real hardware yet).
 
 import threading
 import tkinter as tk
-from tkinter import filedialog, ttk
+from tkinter import ttk
 
 import devices_config as cfg
-from column_parser import load_monomer_protocol
 from synthesis_mode import build_context, DMD_ARRAY
 from display_names import load_display_names, save_display_names
 
@@ -56,34 +55,8 @@ class ManualControlTab:
         body = ttk.Frame(self.parent, padding=10)
         body.pack(fill="both", expand=True)
 
-        self._build_prime_section(body)
         self._build_valve_section(body)
         self._build_pump_section(body)
-
-    def _build_prime_section(self, parent):
-        frame = ttk.LabelFrame(parent, text="Prime", padding=10)
-        frame.pack(fill="x", pady=(0, 10))
-
-        row = ttk.Frame(frame)
-        row.pack(fill="x", pady=2)
-        self.prime_csv_var = tk.StringVar()
-        ttk.Label(row, text="Prime Protocol CSV:", width=24).pack(side="left")
-        ttk.Entry(row, textvariable=self.prime_csv_var).pack(side="left", fill="x", expand=True)
-        ttk.Button(row, text="Browse",
-                   command=lambda: self.prime_csv_var.set(
-                       filedialog.askopenfilename() or self.prime_csv_var.get()
-                   )).pack(side="left")
-
-        run_row = ttk.Frame(frame)
-        run_row.pack(fill="x", pady=5)
-        self.prime_button = ttk.Button(run_row, text="Run Prime", command=self._on_run_prime,
-                                        state="disabled")
-        self.prime_button.pack(side="left")
-        self.prime_status_label = ttk.Label(run_row, text="Prime Status: Idle")
-        self.prime_status_label.pack(side="left", padx=20)
-
-        self.prime_log = tk.Text(frame, height=5, state="disabled", wrap="word", bg="white")
-        self.prime_log.pack(fill="x", pady=(5, 0))
 
     def _build_valve_section(self, parent):
         frame = ttk.LabelFrame(parent, text="12-Port Switching Valve", padding=10)
@@ -235,8 +208,6 @@ class ManualControlTab:
             btn.configure(state="normal" if valve_ok else "disabled")
         self.dispense_button.configure(state="normal")
         self.pump_stop_button.configure(state="normal")
-        self.prime_button.configure(state="normal")
-
     def _on_disconnect(self):
         if self.ctx is None:
             return
@@ -255,7 +226,6 @@ class ManualControlTab:
             btn.configure(state="disabled")
         self.dispense_button.configure(state="disabled")
         self.pump_stop_button.configure(state="disabled")
-        self.prime_button.configure(state="disabled")
 
     # ---------------- valve ----------------
     def _on_valve_port(self, port):
@@ -295,44 +265,3 @@ class ManualControlTab:
         if pump is not None:
             pump.stop()
             self.pump_status_label.configure(text="Pump stopped.")
-
-    # ---------------- prime ----------------
-    def _on_run_prime(self):
-        if self.ctx is None:
-            return
-        csv_path = self.prime_csv_var.get()
-        if not csv_path:
-            self._prime_log("Please select a Prime protocol CSV first.")
-            return
-
-        self.prime_button.configure(state="disabled")
-        self.prime_status_label.configure(text="Prime Status: Running")
-        threading.Thread(target=self._prime_worker, args=(csv_path,), daemon=True).start()
-
-    def _prime_worker(self, csv_path):
-        try:
-            steps = load_monomer_protocol(csv_path)
-        except Exception as e:
-            self.root.after(0, self._prime_log, f"[Error] Failed to load Prime CSV: {e}")
-            self.root.after(0, self._on_prime_finished, "Error")
-            return
-
-        try:
-            for i, step in enumerate(steps, 1):
-                self.root.after(0, self._prime_log, f"[{i}/{len(steps)}] {step}")
-                step.execute(self.ctx)
-            self.root.after(0, self._prime_log, "=== Prime completed ===")
-            self.root.after(0, self._on_prime_finished, "Completed")
-        except Exception as e:
-            self.root.after(0, self._prime_log, f"[Error] {e}")
-            self.root.after(0, self._on_prime_finished, "Error")
-
-    def _prime_log(self, msg):
-        self.prime_log.configure(state="normal")
-        self.prime_log.insert("end", msg + "\n")
-        self.prime_log.see("end")
-        self.prime_log.configure(state="disabled")
-
-    def _on_prime_finished(self, status):
-        self.prime_status_label.configure(text=f"Prime Status: {status}")
-        self.prime_button.configure(state="normal")
