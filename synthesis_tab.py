@@ -212,7 +212,7 @@ class SynthesisTab:
 
     # ---------------- UI layout ----------------
     def _build_widgets(self):
-        top = ttk.Frame(self.parent, padding=10)
+        top = ttk.Frame(self.parent, padding=(10, 6))
         top.pack(fill="x")
 
         ttk.Label(top, text="Synthesis Mode:").grid(row=0, column=0, sticky="w")
@@ -227,40 +227,38 @@ class SynthesisTab:
                         variable=self.simulate_var, command=self._on_simulate_change
                         ).grid(row=0, column=3, padx=20, sticky="w")
 
-        # DMD 연결 토글 - Column/DMD Array 모드 선택과는 독립적. Column 모드는
-        # 연결 안 해도 "No DMD"로 표시된 채 진행 가능하고, DMD Array 모드는
-        # Start 시점에 연결돼 있어야 함 (아래 _on_start에서 확인)
+        # DMD 연결 토글 - DMD Array 모드에서만 의미가 있으므로(Column 합성은
+        # DMD 자체를 안 씀), Column 모드일 땐 아예 숨김 (_on_mode_change에서
+        # grid()/grid_remove()로 전환). 같은 줄에 둬서 세로 공간도 아낌.
         self.dmd_connect_button = ttk.Button(top, text="Connect DMD", command=self._on_toggle_dmd)
-        self.dmd_connect_button.grid(row=1, column=0, sticky="w", pady=(6, 0))
         self.dmd_status_label = ttk.Label(top, text="DMD: No DMD")
-        self.dmd_status_label.grid(row=1, column=1, columnspan=2, sticky="w", pady=(6, 0))
 
         # 실행 상태 바 - 파일 입력 + Play/Pause/Stop + Reagent Volume/Prime +
         # 진행률 링 + Cycle/Step + Elapsed/Remaining/Finish 를 한 줄에 배치
         # (참고 목업과 같은 구조). DMD Array 전용 세부 파라미터(해상도/bin/
         # 노광시간 등)는 항목이 많아서 이 줄이 아니라 바로 아래 별도 줄에 둠.
-        toolbar = ttk.Frame(self.parent, padding=10)
+        toolbar = ttk.Frame(self.parent, padding=(10, 4))
         toolbar.pack(fill="x")
 
         input_left = ttk.Frame(toolbar)
         input_left.pack(side="left", fill="y")
 
         # Column synthesis inputs (파일만 - 간결하게)
-        self.column_frame = ttk.LabelFrame(input_left, text="Column Synthesis Input", padding=8)
+        self.column_frame = ttk.LabelFrame(input_left, text="Column Synthesis Input", padding=6)
         self.seq_path_var = tk.StringVar()
         self.col_protocol_dir_var = tk.StringVar()
         self._file_row(self.column_frame, "Sequence File:", self.seq_path_var, is_dir=False)
         self._file_row(self.column_frame, "Per-base Protocol Folder:", self.col_protocol_dir_var, is_dir=True)
 
         # DMD array synthesis inputs (파일만 - 세부 파라미터는 아래 dmd_params_frame)
-        self.dmd_frame = ttk.LabelFrame(input_left, text="DMD Array Synthesis Input", padding=8)
+        self.dmd_frame = ttk.LabelFrame(input_left, text="DMD Array Synthesis Input", padding=6)
         self.seqlist_path_var = tk.StringVar()
         self.dmd_protocol_dir_var = tk.StringVar()
         self._file_row(self.dmd_frame, "Sequence List File:", self.seqlist_path_var, is_dir=False)
         self._file_row(self.dmd_frame, "DMD Protocol Folder:", self.dmd_protocol_dir_var, is_dir=True)
 
         run_controls = ttk.Frame(toolbar)
-        run_controls.pack(side="left", padx=15)
+        run_controls.pack(side="left", padx=8)
         self.start_button = ttk.Button(run_controls, text="▶", width=3, command=self._on_start)
         self.start_button.pack(side="left")
         self.pause_button = ttk.Button(run_controls, text="⏸", width=3, command=self._on_pause,
@@ -271,7 +269,7 @@ class SynthesisTab:
         self.stop_button.pack(side="left")
 
         reagent_prime = ttk.Frame(toolbar)
-        reagent_prime.pack(side="left", padx=10)
+        reagent_prime.pack(side="left", padx=6)
         ttk.Button(reagent_prime, text="Reagent Volume",
                    command=self._on_reagent_volume_click).pack(side="top", anchor="w")
         ttk.Button(reagent_prime, text="Prime",
@@ -280,7 +278,7 @@ class SynthesisTab:
         self._build_progress_ring(toolbar)
 
         cycle_step_frame = ttk.Frame(toolbar)
-        cycle_step_frame.pack(side="left", padx=15)
+        cycle_step_frame.pack(side="left", padx=8)
         self.cycle_display_var = tk.StringVar(value="Cycle -/-")
         self.step_display_var = tk.StringVar(value="Step -/-")
         ttk.Label(cycle_step_frame, textvariable=self.cycle_display_var,
@@ -289,8 +287,8 @@ class SynthesisTab:
                   font=("Segoe UI", 10, "bold")).pack(anchor="w")
 
         # Elapsed / Remaining (Est.) / Finish (Est.) - 하나의 박스에 세로로
-        info_box = ttk.LabelFrame(toolbar, padding=8)
-        info_box.pack(side="left", padx=10)
+        info_box = ttk.LabelFrame(toolbar, padding=6)
+        info_box.pack(side="left", padx=6)
         self.card_vars = {
             "elapsed": tk.StringVar(value="-"),
             "remaining": tk.StringVar(value="-"),
@@ -331,16 +329,19 @@ class SynthesisTab:
         self.progress_label.pack(fill="x")
 
         # DMD Live Mask viewer (왼쪽) + Fluidic Path (오른쪽) - 참고 목업과 같은 배치
-        middle = ttk.Frame(self.parent, padding=10)
+        middle = ttk.Frame(self.parent, padding=(10, 4))
         middle.pack(fill="both", expand=True)
         self._build_dmd_viewer(middle)
         self._build_fluidic_path(middle)
 
         # Execution Log - 전체 너비
         log_frame = ttk.LabelFrame(self.parent, text="Execution Log", padding=5)
-        log_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        log_frame.pack(fill="both", expand=True, padx=10, pady=(0, 6))
 
-        self.log_tree = ttk.Treeview(log_frame, columns=("time", "message"), show="headings")
+        # height를 명시적으로 작게 줘서 기본값(플랫폼에 따라 10행 안팎)만큼
+        # 세로 공간을 미리 요구하지 않게 함 - fill="both"+expand=True라
+        # 공간이 남으면 어차피 더 늘어남
+        self.log_tree = ttk.Treeview(log_frame, columns=("time", "message"), show="headings", height=5)
         self.log_tree.heading("time", text="Time")
         self.log_tree.heading("message", text="Message")
         self.log_tree.column("time", width=70, anchor="center", stretch=False)
@@ -749,10 +750,14 @@ class SynthesisTab:
             self.dmd_frame.pack_forget()
             self.dmd_params_frame.pack_forget()
             self.column_frame.pack(fill="x", pady=2)
+            self.dmd_connect_button.grid_remove()
+            self.dmd_status_label.grid_remove()
         else:
             self.column_frame.pack_forget()
             self.dmd_frame.pack(fill="x", pady=2)
             self.dmd_params_frame.pack(fill="x", padx=10, pady=(0, 10))
+            self.dmd_connect_button.grid(row=0, column=4, sticky="w", padx=(10, 5))
+            self.dmd_status_label.grid(row=0, column=5, sticky="w")
         if hasattr(self, "dmd_viewer_body"):
             self._update_dmd_viewer_visibility()
 

@@ -37,8 +37,8 @@ class MainWindow:
         # 전부 한 줄에 들어가면서 필요한 최소 폭이 늘어나서, 기본 시작 크기를
         # 넉넉하게 잡아둠 (디스플레이 없는 환경이라 실제 렌더링으로 폭을 직접
         # 확인하지 못해, 계산상 여유를 더 둔 값)
-        root.geometry("1350x800")
-        root.minsize(1150, 700)
+        root.geometry("1350x900")
+        root.minsize(1150, 750)
         root.configure(bg=BG_COLOR)
 
         self._build_header()
