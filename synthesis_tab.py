@@ -732,8 +732,10 @@ class SynthesisTab:
     def _file_row(self, parent, label, var, is_dir):
         row = ttk.Frame(parent)
         row.pack(fill="x", pady=2)
-        ttk.Label(row, text=label, width=24).pack(side="left")
-        ttk.Entry(row, textvariable=var).pack(side="left", fill="x", expand=True)
+        ttk.Label(row, text=label, width=18).pack(side="left")
+        # 상단 toolbar 한 줄에 다른 요소들과 같이 들어가야 해서, Entry 기본
+        # 폭(tkinter 기본값, 꽤 넓음)에 맡기지 않고 명시적으로 좁게 고정
+        ttk.Entry(row, textvariable=var, width=16).pack(side="left", fill="x", expand=True)
         cmd = (lambda: var.set(filedialog.askdirectory() or var.get())) if is_dir else \
               (lambda: var.set(filedialog.askopenfilename() or var.get()))
         ttk.Button(row, text="Browse", command=cmd).pack(side="left")
