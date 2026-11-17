@@ -124,7 +124,7 @@ class ReagentCheckDialog(tk.Toplevel):
         self.on_confirm = on_confirm
         self.totals = totals
         self.preview_only = preview_only
-        self.unit_is_ml = False  # 클릭할 때마다 uL <-> mL 전환
+        self.unit_is_ml = True  # 기본 단위는 mL, 클릭할 때마다 mL <-> uL 전환
 
         ttk.Label(self, text="Required volume per reagent for this recipe:",
                   background=BG_COLOR).pack(anchor="w", padx=15, pady=(15, 5))
@@ -254,14 +254,14 @@ class SynthesisTab:
         self.seq_path_var = tk.StringVar()
         self.col_protocol_dir_var = tk.StringVar()
         self._file_row(self.column_frame, "Sequence File:", self.seq_path_var, is_dir=False)
-        self._file_row(self.column_frame, "Per-base Protocol Folder:", self.col_protocol_dir_var, is_dir=True)
+        self._file_row(self.column_frame, "Protocol Folder:", self.col_protocol_dir_var, is_dir=True)
 
         # DMD array synthesis inputs (파일만 - 세부 파라미터는 아래 dmd_params_frame)
         self.dmd_frame = ttk.LabelFrame(input_left, text="DMD Array Synthesis Input", padding=6)
         self.seqlist_path_var = tk.StringVar()
         self.dmd_protocol_dir_var = tk.StringVar()
-        self._file_row(self.dmd_frame, "Sequence List File:", self.seqlist_path_var, is_dir=False)
-        self._file_row(self.dmd_frame, "DMD Protocol Folder:", self.dmd_protocol_dir_var, is_dir=True)
+        self._file_row(self.dmd_frame, "Sequence List:", self.seqlist_path_var, is_dir=False)
+        self._file_row(self.dmd_frame, "Protocol Folder:", self.dmd_protocol_dir_var, is_dir=True)
 
         run_controls_outer = ttk.Frame(toolbar)
         run_controls_outer.grid(row=0, column=col, sticky="ns", padx=8)
@@ -381,9 +381,20 @@ class SynthesisTab:
         self.dmd_viewer_frame = ttk.LabelFrame(parent, text="DMD Live Mask", padding=10)
         self.dmd_viewer_frame.pack(side="left", fill="both", padx=(0, 5))
 
-        self.dmd_not_applicable_label = ttk.Label(
-            self.dmd_viewer_frame, text="Not applicable in Column Mode"
+        # Column 모드에서는 DMD가 아예 안 쓰이므로, 그 자리에 "지금 어느
+        # 염기를 합성 중인지" 보여주는 서열 뷰를 대신 넣음 - 전체 서열을
+        # 쭉 보여주고 현재 진행 중인 염기만 다른 색으로 강조
+        self.sequence_view_frame = ttk.Frame(self.dmd_viewer_frame)
+        self.sequence_text = tk.Text(
+            self.sequence_view_frame, height=10, width=40, wrap="char",
+            state="disabled", bg="white", font=("Consolas", 11)
         )
+        self.sequence_text.pack(fill="both", expand=True)
+        self.sequence_text.tag_configure("current", background="#333333", foreground="white")
+        self.sequence_info_var = tk.StringVar(value="No sequence loaded")
+        ttk.Label(self.sequence_view_frame, textvariable=self.sequence_info_var,
+                  font=("Segoe UI", 9)).pack(anchor="w", pady=(5, 0))
+        self.loaded_sequence = ""
 
         self.dmd_viewer_body = ttk.Frame(self.dmd_viewer_frame)
 
@@ -408,10 +419,32 @@ class SynthesisTab:
     def _update_dmd_viewer_visibility(self):
         if self.mode_var.get() == COLUMN:
             self.dmd_viewer_body.pack_forget()
-            self.dmd_not_applicable_label.pack(pady=20)
+            self.dmd_viewer_frame.configure(text="Sequence Progress")
+            self.sequence_view_frame.pack(fill="both", expand=True)
         else:
-            self.dmd_not_applicable_label.pack_forget()
+            self.sequence_view_frame.pack_forget()
+            self.dmd_viewer_frame.configure(text="DMD Live Mask")
             self.dmd_viewer_body.pack()
+
+    def _render_sequence_view(self, sequence: str):
+        """전체 서열을 보여주고, 아직 시작 전이라 강조 없이 그대로 표시."""
+        self.loaded_sequence = sequence
+        self.sequence_text.configure(state="normal")
+        self.sequence_text.delete("1.0", "end")
+        self.sequence_text.insert("1.0", sequence)
+        self.sequence_text.configure(state="disabled")
+        self.sequence_info_var.set(f"{len(sequence)} bases")
+
+    def _highlight_sequence_base(self, index: int):
+        """index번째(0-based) 염기를 다른 색으로 강조하고 그 위치로 스크롤."""
+        if not self.loaded_sequence or not (0 <= index < len(self.loaded_sequence)):
+            return
+        self.sequence_text.tag_remove("current", "1.0", "end")
+        self.sequence_text.tag_add("current", f"1.{index}", f"1.{index + 1}")
+        self.sequence_text.see(f"1.{index}")
+        self.sequence_info_var.set(
+            f"Base {index + 1}/{len(self.loaded_sequence)}: {self.loaded_sequence[index]}"
+        )
 
     def _preview_mask(self, direction):
         if not self.mask_results:
@@ -965,6 +998,7 @@ class SynthesisTab:
             steps = build_column_sequence(inp["seq_path"], inp["col_protocol_dir"])
             meta = dict(synthesis_mode=mode, sequence_path=inp["seq_path"],
                         protocol_path=inp["col_protocol_dir"])
+            self._render_sequence_view(read_sequence(inp["seq_path"]))
 
         else:  # DMD_ARRAY
             if not inp["seqlist_path"] or not inp["dmd_protocol_dir"]:
@@ -1037,6 +1071,10 @@ class SynthesisTab:
                 self.root.after(0, self._set_stage, stage_text)
                 self.root.after(0, self.cycle_display_var.set,
                                  f"Cycle {cycle_index + 1}/{self.cycle_total_cycles}")
+                if meta["synthesis_mode"] == COLUMN:
+                    # Column 모드는 사이클 하나 = 염기 하나라서, 지금 사이클
+                    # 인덱스가 그대로 서열에서의 염기 위치가 됨
+                    self.root.after(0, self._highlight_sequence_base, cycle_index)
 
                 if isinstance(step, FluidStep):
                     self.root.after(0, self._start_flow_animation, step.function_name)
