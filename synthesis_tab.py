@@ -20,6 +20,7 @@ from column_parser import build_column_sequence, read_sequence, load_monomer_pro
 from dmd_mask_builder import build_all_masks_from_list
 from dmd_array_sequence import build_dmd_array_steps
 from synthesis_mode import build_context, COLUMN, DMD_ARRAY
+from mock_devices import MockDMD, MockUVSource
 from experiment_log import ExperimentLog
 from steps import FluidStep, DmdExposeStep
 from display_names import load_display_names
@@ -190,6 +191,12 @@ class SynthesisTab:
         self.estimated_total_s = 0.0
         self.completed_duration_s = 0.0
 
+        # DMD/UV 연결은 Synthesis Mode 선택과 별개의 토글 - Column 모드는
+        # DMD 연결 없이도("No DMD") 진행 가능하고, DMD Array 모드만 연결을
+        # 필수로 요구함
+        self.dmd = None
+        self.uv = None
+
         self._build_widgets()
         self._poll_log_queue()
 
@@ -209,6 +216,14 @@ class SynthesisTab:
         ttk.Checkbutton(top, text="Simulation Mode (Mock, test without hardware)",
                         variable=self.simulate_var, command=self._on_simulate_change
                         ).grid(row=0, column=3, padx=20, sticky="w")
+
+        # DMD 연결 토글 - Column/DMD Array 모드 선택과는 독립적. Column 모드는
+        # 연결 안 해도 "No DMD"로 표시된 채 진행 가능하고, DMD Array 모드는
+        # Start 시점에 연결돼 있어야 함 (아래 _on_start에서 확인)
+        self.dmd_connect_button = ttk.Button(top, text="Connect DMD", command=self._on_toggle_dmd)
+        self.dmd_connect_button.grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.dmd_status_label = ttk.Label(top, text="DMD: No DMD")
+        self.dmd_status_label.grid(row=1, column=1, columnspan=2, sticky="w", pady=(6, 0))
 
         # 입력 영역(왼쪽, 폭을 줄임) + 진행률 링(오른쪽)을 한 줄에 같이 배치해서
         # 세로 공간을 너무 많이 차지하지 않도록 함
@@ -729,6 +744,27 @@ class SynthesisTab:
     def _on_simulate_change(self):
         self.set_mode("SIMULATION" if self.simulate_var.get() else "REAL HARDWARE")
 
+    def _on_toggle_dmd(self):
+        if self.dmd is not None:
+            self.dmd.close()
+            self.uv.close()
+            self.dmd = None
+            self.uv = None
+            self.dmd_status_label.configure(text="DMD: No DMD")
+            self.dmd_connect_button.configure(text="Connect DMD")
+            return
+
+        if not self.simulate_var.get():
+            # 실제 DMD/UV 드라이버는 아직 연동되지 않았으므로, 있는 것처럼
+            # 꾸미지 않고 솔직하게 안내만 함
+            self._log("[DMD] Real DMD/UV driver is not wired up yet - only Simulation Mode is supported.")
+            return
+
+        self.dmd = MockDMD()
+        self.uv = MockUVSource()
+        self.dmd_status_label.configure(text="DMD: Connected")
+        self.dmd_connect_button.configure(text="Disconnect DMD")
+
     # ---------------- logging ----------------
     def _log(self, msg):
         self.log_queue.put((time.strftime("%H:%M:%S"), msg))
@@ -746,6 +782,10 @@ class SynthesisTab:
     # ---------------- execution ----------------
     def _on_start(self):
         inp = self._read_inputs()
+        if inp["mode"] == DMD_ARRAY and self.dmd is None:
+            self._log("[Input Error] DMD Array mode requires DMD to be connected first "
+                      "(Connect DMD button).")
+            return
         try:
             steps, meta = self._build_recipe(inp)
         except Exception as e:
@@ -873,6 +913,11 @@ class SynthesisTab:
         final_badge = "IDLE"
         try:
             ctx = build_context(meta["synthesis_mode"], use_mock=inp["use_mock"])
+            # DMD/UV는 Synthesis Mode와 별개로 연결된 상태를 그대로 씀 (Column
+            # 모드에서는 보통 None이라 "No DMD"로 진행되고, DMD Array 모드는
+            # _on_start에서 이미 연결 여부를 확인했으므로 여기서는 항상 있음)
+            ctx.dmd = self.dmd
+            ctx.uv = self.uv
             for i, step in enumerate(steps, 1):
                 if self.stop_event.is_set():
                     status = "stopped"
