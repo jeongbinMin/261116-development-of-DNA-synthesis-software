@@ -440,6 +440,20 @@ class SynthesisTab:
         mid = (x1 + sx * diag, y1 + sy * diag)
         return [p1, mid, p2]
 
+    @classmethod
+    def _staircase_route(cls, p1, p2, stub):
+        """p1에서 먼저 stub만큼 수평으로 뻗은 뒤(계단의 한 칸), 거기서부터
+        45도+직선으로 목표(p2)까지 이어감. stub을 리스트 중앙에서 먼 행일수록
+        길게 줘서, 가운데 쪽 선은 짧게 휘어들어가고 바깥쪽 선은 한 번 더
+        뻗은 뒤 꺾이는 '계단식 부채꼴'이 되도록 함 (손으로 그린 참고 스케치의
+        배선 스타일)."""
+        x1, y1 = p1
+        x2, y2 = p2
+        sx = 1 if x2 >= x1 else -1
+        nub = (x1 + sx * stub, y1)
+        tail = cls._octilinear_route(nub, p2)
+        return [p1] + tail
+
     @staticmethod
     def _chamfer_corners(path, chamfer=14):
         """경로가 꺾이는 지점(90도)을 그대로 두지 않고, 양쪽에서 chamfer
@@ -512,10 +526,16 @@ class SynthesisTab:
             detour(target_idx)
             detoured.add(target_idx)
 
+        # 리스트 세로 중앙에서 먼 행일수록(위/아래 끝쪽) 첫 번째 꺾임 전에
+        # 더 길게 뻗어나가는 '계단식' 모양을 줘서, 전체적으로 레이어가 진
+        # 부채꼴처럼 보이게 함 (참고 스케치 스타일).
+        center = (n - 1) / 2
         styled_paths = []
-        for p in paths:
+        for idx, p in enumerate(paths):
             if len(p) == 2:
-                styled_paths.append(cls._octilinear_route(p[0], p[1]))
+                rank = abs(idx - center)
+                stub = 16 + rank * 9
+                styled_paths.append(cls._staircase_route(p[0], p[1], stub))
             else:
                 styled_paths.append(cls._chamfer_corners(p))
 
