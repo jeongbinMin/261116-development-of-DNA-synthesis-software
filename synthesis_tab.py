@@ -186,6 +186,7 @@ class SynthesisTab:
 
         self.log_queue = queue.Queue()
         self.stop_event = threading.Event()
+        self.pause_event = threading.Event()
         self.worker_thread = None
         self.timer_running = False
         self.estimated_total_s = 0.0
@@ -273,13 +274,14 @@ class SynthesisTab:
         self._on_simulate_change()
 
         # Run controls - Play/Pause/Stop 아이콘 버튼.
-        # Pause는 하드웨어에서 "정지 후 같은 속도로 재구동"이 실제로 맞는지
-        # 검증된 다음에 연결할 예정이라, 지금은 버튼만 두고 비활성화해둠.
+        # Pause: 정지 후 같은 속도로 재구동한다는 가정으로 구현했지만, 아직
+        # 실제 하드웨어로 검증되지 않았음 - 처음 실기 테스트 시 꼭 확인할 것.
         run_frame = ttk.Frame(self.parent, padding=10)
         run_frame.pack(fill="x")
         self.start_button = ttk.Button(run_frame, text="▶", width=3, command=self._on_start)
         self.start_button.pack(side="left")
-        self.pause_button = ttk.Button(run_frame, text="⏸", width=3, state="disabled")
+        self.pause_button = ttk.Button(run_frame, text="⏸", width=3, command=self._on_pause,
+                                        state="disabled")
         self.pause_button.pack(side="left", padx=5)
         self.stop_button = ttk.Button(run_frame, text="■", width=3, command=self._on_stop,
                                        state="disabled")
@@ -800,6 +802,8 @@ class SynthesisTab:
 
     def _launch_run(self, steps, meta, inp):
         self.stop_event.clear()
+        self.pause_event.clear()
+        self.pause_button.configure(text="⏸", state="normal")
         self.start_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
         self.progress_label.configure(text="Preparing (connecting devices)...")
@@ -851,9 +855,22 @@ class SynthesisTab:
         )
 
     def _on_stop(self):
+        self.pause_event.clear()
         self.stop_event.set()
         self.set_status("STOPPING")
         self._log("[Stop requested - will halt after the current step]")
+
+    def _on_pause(self):
+        if self.pause_event.is_set():
+            self.pause_event.clear()
+            self.pause_button.configure(text="⏸")
+            self.set_status("RUNNING")
+            self._log("[Resumed]")
+        else:
+            self.pause_event.set()
+            self.pause_button.configure(text="▶")
+            self.set_status("PAUSED")
+            self._log("[Paused - will pause after the current step reaches a safe point]")
 
     def _build_recipe(self, inp):
         """입력값으로 Step 리스트만 만듦 (장비 연결은 아직 안 함 - Reagent Check 전에
@@ -943,7 +960,7 @@ class SynthesisTab:
                             f"UV: {step.uv_current_amps}A")
                     self.root.after(0, self._show_mask_image, step.mask_path, info)
 
-                step.execute(ctx)
+                step.execute(ctx, pause_event=self.pause_event, stop_event=self.stop_event)
 
                 if isinstance(step, FluidStep):
                     self.root.after(0, self._stop_flow_animation)
@@ -969,8 +986,10 @@ class SynthesisTab:
 
     def _on_run_finished(self, final_badge="IDLE"):
         self.timer_running = False
+        self.pause_event.clear()
         self.start_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
+        self.pause_button.configure(text="⏸", state="disabled")
         self.progress_label.configure(text="Idle")
         self.set_status(final_badge)
         if final_badge == "COMPLETED":

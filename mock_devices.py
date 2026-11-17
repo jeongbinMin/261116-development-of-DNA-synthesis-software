@@ -17,12 +17,21 @@ class MockPump:
         self.capacity_ul = capacity_ul
         self.plunger_mm = plunger_mm
 
-    def dispense(self, amount_ul: float, time_s: float, wait: bool = True):
+    def start_dispense(self, amount_ul: float, time_s: float):
         speed = (amount_ul / self.capacity_ul) * self.plunger_mm * 60 / time_s
         print(f"  [MockPump:{self.name}] {amount_ul}uL / {time_s}s "
-              f"(속도 {speed:.2f}mm/min) 구동 (실제로는 {time_s}s 대기, Mock은 {MOCK_STEP_DELAY_S}s 대기)")
+              f"(속도 {speed:.2f}mm/min) 구동 시작 (실제로는 {time_s}s, Mock은 {MOCK_STEP_DELAY_S}s 대기)")
+
+    def resume_dispense(self):
+        print(f"  [MockPump:{self.name}] 재개")
+
+    def effective_dispense_time(self, time_s: float) -> float:
+        return MOCK_STEP_DELAY_S
+
+    def dispense(self, amount_ul: float, time_s: float, wait: bool = True):
+        self.start_dispense(amount_ul, time_s)
         if wait:
-            time.sleep(MOCK_STEP_DELAY_S)
+            time.sleep(self.effective_dispense_time(time_s))
 
     def stop(self):
         print(f"  [MockPump:{self.name}] 정지")
