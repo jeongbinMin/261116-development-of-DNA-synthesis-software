@@ -237,11 +237,17 @@ class SynthesisTab:
         # 진행률 링 + Cycle/Step + Elapsed/Remaining/Finish 를 한 줄에 배치
         # (참고 목업과 같은 구조). DMD Array 전용 세부 파라미터(해상도/bin/
         # 노광시간 등)는 항목이 많아서 이 줄이 아니라 바로 아래 별도 줄에 둠.
+        # 각 구획을 grid의 한 행에 나란히 놓고 sticky="ns"로 행 높이를 전부
+        # 맞춘 뒤, 안쪽 내용물은 pack(expand=True)로 그 안에서 세로 가운데
+        # 정렬 - 높이가 서로 다른 블록(2줄짜리 파일 입력 vs 버튼 vs 링)이
+        # 전부 위쪽 기준으로 들쭉날쭉 떠 있던 것을 가운데 기준으로 맞춤.
         toolbar = ttk.Frame(self.parent, padding=(10, 4))
         toolbar.pack(fill="x")
+        col = 0
 
         input_left = ttk.Frame(toolbar)
-        input_left.pack(side="left", fill="y")
+        input_left.grid(row=0, column=col, sticky="nsw")
+        col += 1
 
         # Column synthesis inputs (파일만 - 간결하게)
         self.column_frame = ttk.LabelFrame(input_left, text="Column Synthesis Input", padding=6)
@@ -257,8 +263,11 @@ class SynthesisTab:
         self._file_row(self.dmd_frame, "Sequence List File:", self.seqlist_path_var, is_dir=False)
         self._file_row(self.dmd_frame, "DMD Protocol Folder:", self.dmd_protocol_dir_var, is_dir=True)
 
-        run_controls = ttk.Frame(toolbar)
-        run_controls.pack(side="left", padx=8)
+        run_controls_outer = ttk.Frame(toolbar)
+        run_controls_outer.grid(row=0, column=col, sticky="ns", padx=8)
+        col += 1
+        run_controls = ttk.Frame(run_controls_outer)
+        run_controls.pack(expand=True)
         self.start_button = ttk.Button(run_controls, text="▶", width=3, command=self._on_start)
         self.start_button.pack(side="left")
         self.pause_button = ttk.Button(run_controls, text="⏸", width=3, command=self._on_pause,
@@ -268,17 +277,26 @@ class SynthesisTab:
                                        state="disabled")
         self.stop_button.pack(side="left")
 
-        reagent_prime = ttk.Frame(toolbar)
-        reagent_prime.pack(side="left", padx=6)
+        reagent_prime_outer = ttk.Frame(toolbar)
+        reagent_prime_outer.grid(row=0, column=col, sticky="ns", padx=6)
+        col += 1
+        reagent_prime = ttk.Frame(reagent_prime_outer)
+        reagent_prime.pack(expand=True)
         ttk.Button(reagent_prime, text="Reagent Volume",
-                   command=self._on_reagent_volume_click).pack(side="top", anchor="w")
+                   command=self._on_reagent_volume_click).pack(side="top", fill="x")
         ttk.Button(reagent_prime, text="Prime",
-                   command=self._on_prime_click).pack(side="top", anchor="w", pady=(4, 0))
+                   command=self._on_prime_click).pack(side="top", fill="x", pady=(4, 0))
 
-        self._build_progress_ring(toolbar)
+        ring_outer = ttk.Frame(toolbar)
+        ring_outer.grid(row=0, column=col, sticky="ns")
+        col += 1
+        self._build_progress_ring(ring_outer)
 
-        cycle_step_frame = ttk.Frame(toolbar)
-        cycle_step_frame.pack(side="left", padx=8)
+        cycle_step_outer = ttk.Frame(toolbar)
+        cycle_step_outer.grid(row=0, column=col, sticky="ns", padx=8)
+        col += 1
+        cycle_step_frame = ttk.Frame(cycle_step_outer)
+        cycle_step_frame.pack(expand=True)
         self.cycle_display_var = tk.StringVar(value="Cycle -/-")
         self.step_display_var = tk.StringVar(value="Step -/-")
         ttk.Label(cycle_step_frame, textvariable=self.cycle_display_var,
@@ -286,15 +304,22 @@ class SynthesisTab:
         ttk.Label(cycle_step_frame, textvariable=self.step_display_var,
                   font=("Segoe UI", 10, "bold")).pack(anchor="w")
 
-        # Elapsed / Remaining (Est.) / Finish (Est.) - 하나의 박스에 세로로
-        info_box = ttk.LabelFrame(toolbar, padding=6)
-        info_box.pack(side="left", padx=6)
+        # Estimated Total / Elapsed / Remaining (Est.) / Finish (Est.) - 한 박스에 세로로.
+        # Estimated Total은 일시정지했다가 재개하면 그 멈춘 시간만큼 더해서
+        # 다시 계산됨 (실제 벽시계 기준 총 소요시간을 더 현실적으로 보여주기 위함)
+        info_box_outer = ttk.Frame(toolbar)
+        info_box_outer.grid(row=0, column=col, sticky="ns", padx=6)
+        col += 1
+        info_box = ttk.LabelFrame(info_box_outer, padding=6)
+        info_box.pack(expand=True)
         self.card_vars = {
+            "estimated_total": tk.StringVar(value="-"),
             "elapsed": tk.StringVar(value="-"),
             "remaining": tk.StringVar(value="-"),
             "finish_est": tk.StringVar(value="-"),
         }
-        info_rows = (("elapsed", "Elapsed"), ("remaining", "Remaining (Est.)"), ("finish_est", "Finish (Est.)"))
+        info_rows = (("estimated_total", "Estimated Total"), ("elapsed", "Elapsed"),
+                     ("remaining", "Remaining (Est.)"), ("finish_est", "Finish (Est.)"))
         for r, (key, label) in enumerate(info_rows):
             ttk.Label(info_box, text=label).grid(row=r, column=0, sticky="w", padx=(0, 10))
             ttk.Label(info_box, textvariable=self.card_vars[key],
@@ -413,7 +438,7 @@ class SynthesisTab:
         """원형 진행률(%) 표시 + 그 아래 현재 단계/사이클 텍스트.
         카드 그리드 방식은 너무 요란해 보여서, 작은 텍스트 한 줄로 단순화."""
         frame = ttk.Frame(parent, padding=(10, 0, 0, 0))
-        frame.pack(side="left")
+        frame.pack(expand=True)
 
         ring_size, ring_width = 90, 10
         pad = ring_width / 2 + 2
@@ -842,11 +867,21 @@ class SynthesisTab:
         self.progress_label.configure(text="Preparing (connecting devices)...")
         self.set_status("RUNNING")
 
-        self.estimated_total_s = sum(step_duration(s) for s in steps)
+        # base_estimated_total_s: 스텝 소요시간 합계 그대로의 "작업량" 추정치 -
+        # 남은시간/퍼센트 계산은 항상 이 값 기준 (일시정지해도 안 변함).
+        # estimated_total_s: 화면에 보여주는 값으로, 일시정지했다가 재개하면
+        # 그 멈춰있던 시간만큼 더해서 다시 계산함 (실제 벽시계 기준 총
+        # 소요시간을 더 현실적으로 보여주기 위함).
+        self.base_estimated_total_s = sum(step_duration(s) for s in steps)
+        self.estimated_total_s = self.base_estimated_total_s
         self.completed_duration_s = 0.0
+        self.remaining_s = self.estimated_total_s
+        self.total_paused_s = 0.0
+        self.pause_start_time = None
         self.run_start_time = time.time()
         self.timer_running = True
 
+        self.card_vars["estimated_total"].set(format_duration(self.estimated_total_s))
         self.card_vars["elapsed"].set("0:00:00")
         self.card_vars["remaining"].set(format_duration(self.estimated_total_s))
         self._set_finish_est(self.estimated_total_s)
@@ -867,6 +902,9 @@ class SynthesisTab:
             return
         elapsed = time.time() - self.run_start_time
         self.card_vars["elapsed"].set(format_duration(elapsed))
+        # Finish(Est.)는 "지금 + 남은 작업시간"이라, 일시정지 중에도 "지금"은
+        # 계속 흐르므로 여기서 매번 다시 계산해야 멈춰 보이지 않음
+        self._set_finish_est(self.remaining_s)
         self.root.after(500, self._tick_elapsed)
 
     def _set_finish_est(self, remaining_s):
@@ -895,12 +933,23 @@ class SynthesisTab:
 
     def _on_pause(self):
         if self.pause_event.is_set():
+            # 재개: 이번에 멈춰있던 시간을 누적해서, 화면에 보여주는 예상
+            # 총 소요시간(estimated_total_s)을 그만큼 늘려 다시 계산함.
+            # 작업량 자체(base_estimated_total_s)와 남은시간 계산은 그대로.
             self.pause_event.clear()
+            if self.pause_start_time is not None:
+                paused_for = time.time() - self.pause_start_time
+                self.total_paused_s += paused_for
+                self.pause_start_time = None
+                self.estimated_total_s = self.base_estimated_total_s + self.total_paused_s
+                self.card_vars["estimated_total"].set(format_duration(self.estimated_total_s))
+                self._log(f"[Resumed - paused for {format_duration(paused_for)}; "
+                          f"estimated total duration recalculated to {format_duration(self.estimated_total_s)}]")
             self.pause_button.configure(text="⏸")
             self.set_status("RUNNING")
-            self._log("[Resumed]")
         else:
             self.pause_event.set()
+            self.pause_start_time = time.time()
             self.pause_button.configure(text="▶")
             self.set_status("PAUSED")
             self._log("[Paused - will pause after the current step reaches a safe point]")
@@ -1002,11 +1051,11 @@ class SynthesisTab:
                     self.root.after(0, self._stop_flow_animation)
 
                 self.completed_duration_s += step_duration(step)
-                remaining = max(0.0, self.estimated_total_s - self.completed_duration_s)
-                self.root.after(0, self.card_vars["remaining"].set, format_duration(remaining))
-                self.root.after(0, self._set_finish_est, remaining)
-                percent = 0 if self.estimated_total_s <= 0 else min(
-                    100, 100 * self.completed_duration_s / self.estimated_total_s)
+                self.remaining_s = max(0.0, self.base_estimated_total_s - self.completed_duration_s)
+                self.root.after(0, self.card_vars["remaining"].set, format_duration(self.remaining_s))
+                self.root.after(0, self._set_finish_est, self.remaining_s)
+                percent = 0 if self.base_estimated_total_s <= 0 else min(
+                    100, 100 * self.completed_duration_s / self.base_estimated_total_s)
                 self.root.after(0, self._set_overall_progress, percent)
             else:
                 self._log("=== Full sequence completed ===")
@@ -1023,6 +1072,7 @@ class SynthesisTab:
     def _on_run_finished(self, final_badge="IDLE"):
         self.timer_running = False
         self.pause_event.clear()
+        self.pause_start_time = None
         self.start_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
         self.pause_button.configure(text="⏸", state="disabled")
