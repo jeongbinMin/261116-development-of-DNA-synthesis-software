@@ -491,7 +491,8 @@ class SynthesisTab:
         port_numbers = list(range(1, 13))
         n = len(port_numbers)
 
-        r, hr = 105.0, 6.0
+        r, hr = 85.0, 6.0
+        output_r = 9.0   # 밸브 중앙의 공용 출력 포트 반지름
         sq_w, sq_h, pitch = 90.0, 22.0, 33.0
         sq_left_x = 20.0
         sq_right_x = sq_left_x + sq_w
@@ -519,7 +520,9 @@ class SynthesisTab:
         self._rv_center = (cx, cy)
 
         self.port_points = {k + 1: self._hole_point(cx, cy, r, k) for k in range(n)}
-        outlet_point = (cx + r, cy)   # 0도(접선) 지점 - 어느 구멍과도 안 겹치는 공용 출구
+        # 공용 출력 포트: 로터리밸브 내부에서 선택된 포트가 연결되는 중앙 허브를
+        # 실제로 그려서, 거기서부터 Flow Cell로 나가는 선이 시작되게 함
+        outlet_point = (cx + output_r, cy)
 
         line_ids, line_paths = {}, {}
         for i in range(n):
@@ -546,8 +549,14 @@ class SynthesisTab:
         for px, py in self.port_points.values():
             self.fluidic_canvas.create_oval(px - hr, py - hr, px + hr, py + hr,
                                              fill="white", outline="#1a1a1a", width=1)
-        self.fluidic_canvas.create_text(cx, cy, text="12 PORT", font=("Segoe UI", 9, "bold"))
+        # 중앙 공용 출력 포트 - 바늘(needle)이 가리키는 시작점이자 Flow Cell로
+        # 나가는 선의 출발점. 안에 그려야 하므로 바늘보다 먼저 그림
+        self.fluidic_canvas.create_oval(
+            cx - output_r, cy - output_r, cx + output_r, cy + output_r,
+            fill="white", outline="#1a1a1a", width=1.5
+        )
         self.rv_needle = self.fluidic_canvas.create_line(cx, cy, cx, cy, fill="#1a1a1a", width=3)
+        self.fluidic_canvas.create_text(cx, cy + r + 26, text="12 PORT", font=("Segoe UI", 9, "bold"))
 
         # 사각형(입구 패드) - 선 끝이 테두리에 깔끔하게 덮이도록 맨 마지막에 그림
         self.pump_nodes = {}      # name -> fill_id
