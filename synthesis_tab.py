@@ -51,10 +51,16 @@ def step_duration(step) -> float:
 
 
 def format_duration(seconds: float) -> str:
+    """'3h 52min 20s' 처럼 단위를 붙여 읽기 쉽게 표시. 값이 작으면 큰
+    단위(0h, 0min)는 생략."""
     seconds = max(0, int(seconds))
     h, rem = divmod(seconds, 3600)
     m, s = divmod(rem, 60)
-    return f"{h:d}:{m:02d}:{s:02d}"
+    if h > 0:
+        return f"{h}h {m}min {s}s"
+    if m > 0:
+        return f"{m}min {s}s"
+    return f"{s}s"
 
 
 # Function 이름 -> 카드에 표시할 사람이 읽기 좋은 단계 이름.
@@ -313,13 +319,12 @@ class SynthesisTab:
         info_box = ttk.LabelFrame(info_box_outer, padding=6)
         info_box.pack(expand=True)
         self.card_vars = {
-            "estimated_total": tk.StringVar(value="-"),
             "elapsed": tk.StringVar(value="-"),
             "remaining": tk.StringVar(value="-"),
             "finish_est": tk.StringVar(value="-"),
         }
-        info_rows = (("estimated_total", "Estimated Total"), ("elapsed", "Elapsed"),
-                     ("remaining", "Remaining (Est.)"), ("finish_est", "Finish (Est.)"))
+        info_rows = (("elapsed", "Running time"), ("remaining", "Remaining time"),
+                     ("finish_est", "Finish time"))
         for r, (key, label) in enumerate(info_rows):
             ttk.Label(info_box, text=label).grid(row=r, column=0, sticky="w", padx=(0, 10))
             ttk.Label(info_box, textvariable=self.card_vars[key],
@@ -349,9 +354,6 @@ class SynthesisTab:
 
         self._on_mode_change()
         self._on_simulate_change()
-
-        self.progress_label = ttk.Label(self.parent, text="Idle", padding=(10, 0))
-        self.progress_label.pack(fill="x")
 
         # DMD Live Mask viewer (왼쪽) + Fluidic Path (오른쪽) - 참고 목업과 같은 배치
         middle = ttk.Frame(self.parent, padding=(10, 4))
@@ -897,27 +899,21 @@ class SynthesisTab:
         self.pause_button.configure(text="⏸", state="normal")
         self.start_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
-        self.progress_label.configure(text="Preparing (connecting devices)...")
+        self._set_stage("Stage: Preparing (connecting devices)...")
         self.set_status("RUNNING")
 
         # base_estimated_total_s: 스텝 소요시간 합계 그대로의 "작업량" 추정치 -
         # 남은시간/퍼센트 계산은 항상 이 값 기준 (일시정지해도 안 변함).
-        # estimated_total_s: 화면에 보여주는 값으로, 일시정지했다가 재개하면
-        # 그 멈춰있던 시간만큼 더해서 다시 계산함 (실제 벽시계 기준 총
-        # 소요시간을 더 현실적으로 보여주기 위함).
         self.base_estimated_total_s = sum(step_duration(s) for s in steps)
-        self.estimated_total_s = self.base_estimated_total_s
         self.completed_duration_s = 0.0
-        self.remaining_s = self.estimated_total_s
-        self.total_paused_s = 0.0
+        self.remaining_s = self.base_estimated_total_s
         self.pause_start_time = None
         self.run_start_time = time.time()
         self.timer_running = True
 
-        self.card_vars["estimated_total"].set(format_duration(self.estimated_total_s))
-        self.card_vars["elapsed"].set("0:00:00")
-        self.card_vars["remaining"].set(format_duration(self.estimated_total_s))
-        self._set_finish_est(self.estimated_total_s)
+        self.card_vars["elapsed"].set(format_duration(0))
+        self.card_vars["remaining"].set(format_duration(self.remaining_s))
+        self._set_finish_est(self.remaining_s)
         self._set_overall_progress(0)
         self._set_stage("Stage: Starting...")
         self.cycle_display_var.set(f"Cycle -/{self.cycle_total_cycles}")
@@ -966,18 +962,14 @@ class SynthesisTab:
 
     def _on_pause(self):
         if self.pause_event.is_set():
-            # 재개: 이번에 멈춰있던 시간을 누적해서, 화면에 보여주는 예상
-            # 총 소요시간(estimated_total_s)을 그만큼 늘려 다시 계산함.
-            # 작업량 자체(base_estimated_total_s)와 남은시간 계산은 그대로.
+            # 재개: 남은시간(remaining_s)은 멈춰있는 동안 그대로였으므로
+            # 그대로 두고, Finish time만 "지금 + 남은시간"으로 다시 계산되게
+            # 둠(_tick_elapsed가 0.5초마다 이미 갱신하고 있음)
             self.pause_event.clear()
             if self.pause_start_time is not None:
                 paused_for = time.time() - self.pause_start_time
-                self.total_paused_s += paused_for
                 self.pause_start_time = None
-                self.estimated_total_s = self.base_estimated_total_s + self.total_paused_s
-                self.card_vars["estimated_total"].set(format_duration(self.estimated_total_s))
-                self._log(f"[Resumed - paused for {format_duration(paused_for)}; "
-                          f"estimated total duration recalculated to {format_duration(self.estimated_total_s)}]")
+                self._log(f"[Resumed - paused for {format_duration(paused_for)}]")
             self.pause_button.configure(text="⏸")
             self.set_status("RUNNING")
         else:
@@ -1057,8 +1049,6 @@ class SynthesisTab:
                     final_badge = "IDLE"
                     self._log(f"[{i}/{len(steps)}] Stopped by user")
                     break
-                self.root.after(0, lambda i=i, n=len(steps): self.progress_label.configure(
-                    text=f"{i}/{n} in progress"))
                 self.root.after(0, self.step_display_var.set, f"Step {i}/{len(steps)}")
                 self._log(f"[{i}/{len(steps)}] {step}")
 
@@ -1114,7 +1104,6 @@ class SynthesisTab:
         self.start_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
         self.pause_button.configure(text="⏸", state="disabled")
-        self.progress_label.configure(text="Idle")
         self.set_status(final_badge)
         if final_badge == "COMPLETED":
             self._set_overall_progress(100)
