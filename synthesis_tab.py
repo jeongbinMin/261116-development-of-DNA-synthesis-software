@@ -235,32 +235,77 @@ class SynthesisTab:
         self.dmd_status_label = ttk.Label(top, text="DMD: No DMD")
         self.dmd_status_label.grid(row=1, column=1, columnspan=2, sticky="w", pady=(6, 0))
 
-        # 입력 영역(왼쪽, 폭을 줄임) + 진행률 링(오른쪽)을 한 줄에 같이 배치해서
-        # 세로 공간을 너무 많이 차지하지 않도록 함
-        input_row = ttk.Frame(self.parent, padding=10)
-        input_row.pack(fill="x")
+        # 실행 상태 바 - 파일 입력 + Play/Pause/Stop + Reagent Volume/Prime +
+        # 진행률 링 + Cycle/Step + Elapsed/Remaining/Finish 를 한 줄에 배치
+        # (참고 목업과 같은 구조). DMD Array 전용 세부 파라미터(해상도/bin/
+        # 노광시간 등)는 항목이 많아서 이 줄이 아니라 바로 아래 별도 줄에 둠.
+        toolbar = ttk.Frame(self.parent, padding=10)
+        toolbar.pack(fill="x")
 
-        input_left = ttk.Frame(input_row)
-        input_left.pack(side="left", fill="both", expand=True)
+        input_left = ttk.Frame(toolbar)
+        input_left.pack(side="left", fill="y")
 
-        self._build_progress_ring(input_row)
-
-        # Column synthesis inputs
-        self.column_frame = ttk.LabelFrame(input_left, text="Column Synthesis Input", padding=10)
+        # Column synthesis inputs (파일만 - 간결하게)
+        self.column_frame = ttk.LabelFrame(input_left, text="Column Synthesis Input", padding=8)
         self.seq_path_var = tk.StringVar()
         self.col_protocol_dir_var = tk.StringVar()
         self._file_row(self.column_frame, "Sequence File:", self.seq_path_var, is_dir=False)
         self._file_row(self.column_frame, "Per-base Protocol Folder:", self.col_protocol_dir_var, is_dir=True)
 
-        # DMD array synthesis inputs
-        self.dmd_frame = ttk.LabelFrame(input_left, text="DMD Array Synthesis Input", padding=10)
+        # DMD array synthesis inputs (파일만 - 세부 파라미터는 아래 dmd_params_frame)
+        self.dmd_frame = ttk.LabelFrame(input_left, text="DMD Array Synthesis Input", padding=8)
         self.seqlist_path_var = tk.StringVar()
         self.dmd_protocol_dir_var = tk.StringVar()
         self._file_row(self.dmd_frame, "Sequence List File:", self.seqlist_path_var, is_dir=False)
         self._file_row(self.dmd_frame, "DMD Protocol Folder:", self.dmd_protocol_dir_var, is_dir=True)
 
-        params = ttk.Frame(self.dmd_frame)
-        params.pack(fill="x", pady=5)
+        run_controls = ttk.Frame(toolbar)
+        run_controls.pack(side="left", padx=15)
+        self.start_button = ttk.Button(run_controls, text="▶", width=3, command=self._on_start)
+        self.start_button.pack(side="left")
+        self.pause_button = ttk.Button(run_controls, text="⏸", width=3, command=self._on_pause,
+                                        state="disabled")
+        self.pause_button.pack(side="left", padx=5)
+        self.stop_button = ttk.Button(run_controls, text="■", width=3, command=self._on_stop,
+                                       state="disabled")
+        self.stop_button.pack(side="left")
+
+        reagent_prime = ttk.Frame(toolbar)
+        reagent_prime.pack(side="left", padx=10)
+        ttk.Button(reagent_prime, text="Reagent Volume",
+                   command=self._on_reagent_volume_click).pack(side="top", anchor="w")
+        ttk.Button(reagent_prime, text="Prime",
+                   command=self._on_prime_click).pack(side="top", anchor="w", pady=(4, 0))
+
+        self._build_progress_ring(toolbar)
+
+        cycle_step_frame = ttk.Frame(toolbar)
+        cycle_step_frame.pack(side="left", padx=15)
+        self.cycle_display_var = tk.StringVar(value="Cycle -/-")
+        self.step_display_var = tk.StringVar(value="Step -/-")
+        ttk.Label(cycle_step_frame, textvariable=self.cycle_display_var,
+                  font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        ttk.Label(cycle_step_frame, textvariable=self.step_display_var,
+                  font=("Segoe UI", 10, "bold")).pack(anchor="w")
+
+        # Elapsed / Remaining (Est.) / Finish (Est.) - 하나의 박스에 세로로
+        info_box = ttk.LabelFrame(toolbar, padding=8)
+        info_box.pack(side="left", padx=10)
+        self.card_vars = {
+            "elapsed": tk.StringVar(value="-"),
+            "remaining": tk.StringVar(value="-"),
+            "finish_est": tk.StringVar(value="-"),
+        }
+        info_rows = (("elapsed", "Elapsed"), ("remaining", "Remaining (Est.)"), ("finish_est", "Finish (Est.)"))
+        for r, (key, label) in enumerate(info_rows):
+            ttk.Label(info_box, text=label).grid(row=r, column=0, sticky="w", padx=(0, 10))
+            ttk.Label(info_box, textvariable=self.card_vars[key],
+                      font=("Segoe UI", 10, "bold")).grid(row=r, column=1, sticky="e")
+
+        # DMD Array 전용 세부 파라미터 - 항목이 많아서 입력 줄 바로 아래 별도로
+        self.dmd_params_frame = ttk.LabelFrame(self.parent, text="DMD Array Parameters", padding=8)
+        params = ttk.Frame(self.dmd_params_frame)
+        params.pack(fill="x", pady=2)
         self.pixel_w_var = tk.IntVar(value=1920)
         self.pixel_h_var = tk.IntVar(value=1080)
         self.bin_w_var = tk.IntVar(value=1)
@@ -282,32 +327,8 @@ class SynthesisTab:
         self._on_mode_change()
         self._on_simulate_change()
 
-        # Run controls - Play/Pause/Stop 아이콘 버튼.
-        # Pause: 정지 후 같은 속도로 재구동한다는 가정으로 구현했지만, 아직
-        # 실제 하드웨어로 검증되지 않았음 - 처음 실기 테스트 시 꼭 확인할 것.
-        run_frame = ttk.Frame(self.parent, padding=10)
-        run_frame.pack(fill="x")
-        self.start_button = ttk.Button(run_frame, text="▶", width=3, command=self._on_start)
-        self.start_button.pack(side="left")
-        self.pause_button = ttk.Button(run_frame, text="⏸", width=3, command=self._on_pause,
-                                        state="disabled")
-        self.pause_button.pack(side="left", padx=5)
-        self.stop_button = ttk.Button(run_frame, text="■", width=3, command=self._on_stop,
-                                       state="disabled")
-        self.stop_button.pack(side="left")
-
-        ttk.Separator(run_frame, orient="vertical").pack(side="left", fill="y", padx=10)
-        ttk.Button(run_frame, text="Reagent Volume",
-                   command=self._on_reagent_volume_click).pack(side="left")
-        ttk.Button(run_frame, text="Prime", command=self._on_prime_click).pack(side="left", padx=5)
-
-        self.progress_label = ttk.Label(run_frame, text="Idle")
-        self.progress_label.pack(side="left", padx=20)
-
-        # Progress info cards - 전체 너비로 따로 한 줄
-        cards_row = ttk.Frame(self.parent, padding=10)
-        cards_row.pack(fill="x")
-        self._build_progress_cards(cards_row)
+        self.progress_label = ttk.Label(self.parent, text="Idle", padding=(10, 0))
+        self.progress_label.pack(fill="x")
 
         # DMD Live Mask viewer (왼쪽) + Fluidic Path (오른쪽) - 참고 목업과 같은 배치
         middle = ttk.Frame(self.parent, padding=10)
@@ -387,38 +408,11 @@ class SynthesisTab:
             self.dmd_image_label.configure(image="", text=f"(failed to load image: {e})")
         self.dmd_info_var.set(info_text)
 
-    def _build_progress_cards(self, parent):
-        frame = ttk.LabelFrame(parent, text="Synthesis Progress", padding=10)
-        frame.pack(side="left", fill="both", expand=True, padx=(0, 5))
-
-        self.card_vars = {
-            "total_steps": tk.StringVar(value="-"),
-            "estimated_total": tk.StringVar(value="-"),
-            "elapsed": tk.StringVar(value="-"),
-            "remaining": tk.StringVar(value="-"),
-            "finish_est": tk.StringVar(value="-"),
-        }
-        labels = {
-            "total_steps": "Total Steps",
-            "estimated_total": "Estimated Total",
-            "elapsed": "Elapsed",
-            "remaining": "Remaining",
-            "finish_est": "Finish (Est.)",
-        }
-        for i, key in enumerate(labels):
-            card = ttk.Frame(frame, relief="groove", padding=8)
-            card.grid(row=0, column=i, padx=5, pady=5, sticky="nsew")
-            ttk.Label(card, text=labels[key], font=("Segoe UI", 9)).pack(anchor="w")
-            ttk.Label(card, textvariable=self.card_vars[key],
-                      font=("Segoe UI", 14, "bold")).pack(anchor="w")
-            frame.grid_columnconfigure(i, weight=1)
-
     def _build_progress_ring(self, parent):
         """원형 진행률(%) 표시 + 그 아래 현재 단계/사이클 텍스트.
-        카드 그리드 방식은 너무 요란해 보여서, 작은 텍스트 한 줄로 단순화.
-        세로 공간을 아끼기 위해 입력 영역 오른쪽에 작게 붙여서 배치."""
+        카드 그리드 방식은 너무 요란해 보여서, 작은 텍스트 한 줄로 단순화."""
         frame = ttk.Frame(parent, padding=(10, 0, 0, 0))
-        frame.pack(side="right")
+        frame.pack(side="left")
 
         ring_size, ring_width = 90, 10
         pad = ring_width / 2 + 2
@@ -751,10 +745,12 @@ class SynthesisTab:
     def _on_mode_change(self):
         if self.mode_var.get() == COLUMN:
             self.dmd_frame.pack_forget()
-            self.column_frame.pack(fill="x", padx=10, pady=5)
+            self.dmd_params_frame.pack_forget()
+            self.column_frame.pack(fill="x", pady=2)
         else:
             self.column_frame.pack_forget()
-            self.dmd_frame.pack(fill="x", padx=10, pady=5)
+            self.dmd_frame.pack(fill="x", pady=2)
+            self.dmd_params_frame.pack(fill="x", padx=10, pady=(0, 10))
         if hasattr(self, "dmd_viewer_body"):
             self._update_dmd_viewer_visibility()
 
@@ -844,13 +840,13 @@ class SynthesisTab:
         self.run_start_time = time.time()
         self.timer_running = True
 
-        self.card_vars["total_steps"].set(str(len(steps)))
-        self.card_vars["estimated_total"].set(format_duration(self.estimated_total_s))
         self.card_vars["elapsed"].set("0:00:00")
         self.card_vars["remaining"].set(format_duration(self.estimated_total_s))
         self._set_finish_est(self.estimated_total_s)
         self._set_overall_progress(0)
         self._set_stage("Stage: Starting...")
+        self.cycle_display_var.set(f"Cycle -/{self.cycle_total_cycles}")
+        self.step_display_var.set(f"Step 0/{len(steps)}")
 
         self._tick_elapsed()
 
@@ -973,6 +969,7 @@ class SynthesisTab:
                     break
                 self.root.after(0, lambda i=i, n=len(steps): self.progress_label.configure(
                     text=f"{i}/{n} in progress"))
+                self.root.after(0, self.step_display_var.set, f"Step {i}/{len(steps)}")
                 self._log(f"[{i}/{len(steps)}] {step}")
 
                 template_len = max(1, self.cycle_template_len)
@@ -982,6 +979,8 @@ class SynthesisTab:
                                if position < len(self.cycle_stage_labels) else step_stage_label(step))
                 stage_text = f"Stage: {stage_label}   (Cycle {cycle_index + 1}/{self.cycle_total_cycles})"
                 self.root.after(0, self._set_stage, stage_text)
+                self.root.after(0, self.cycle_display_var.set,
+                                 f"Cycle {cycle_index + 1}/{self.cycle_total_cycles}")
 
                 if isinstance(step, FluidStep):
                     self.root.after(0, self._start_flow_animation, step.function_name)
