@@ -3,7 +3,7 @@
 
 탭(ttk.Notebook) 대신 왼쪽 사이드바 버튼으로 화면을 전환하는 방식으로 변경.
 (사용자가 제공한 와이어프레임/참고 목업과 동일한 구조 - Synthesis/Manual/
-Environment/System 4개 섹션)
+Environment/History 4개 섹션)
 색감은 스플래시와 동일하게 무채색 계열로 맞춤.
 """
 
@@ -119,7 +119,7 @@ class MainWindow:
             ("Synthesis", self.synthesis_frame),
             ("Manual", self.manual_frame),
             ("Environment", self.environment_frame),
-            ("System", self.system_frame),
+            ("History", self.system_frame),
         ]
         self.nav_buttons = {}
         for name, frame in self.nav_items:

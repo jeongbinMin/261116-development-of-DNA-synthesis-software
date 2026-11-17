@@ -191,18 +191,48 @@ class ManualControlTab:
         threading.Thread(target=self._connect_worker, args=(use_mock,), daemon=True).start()
 
     def _connect_worker(self, use_mock):
-        ctx = build_context(DMD_ARRAY, use_mock=use_mock)
-        self.root.after(0, self._on_connected, ctx)
+        if use_mock:
+            # Mock은 실패할 일이 없으므로 그대로 build_context 사용
+            ctx = build_context(DMD_ARRAY, use_mock=True)
+            failed_pumps, valve_ok = [], True
+        else:
+            # 실제 하드웨어는 개별 포트가 실패해도 build_context가 예외를
+            # 던지지 않고 조용히 넘어가기 때문에, 뭐가 실제로 연결됐는지
+            # 확인하려면 SynthesisController를 직접 써서 진단 정보를 봐야 함
+            # (안 그러면 아무것도 안 붙어도 "Connected"라고 거짓으로 뜨게 됨)
+            from steps import SynthesisContext
+            from synthesis_controller import SynthesisController
+            controller = SynthesisController()
+            ctx = SynthesisContext(valve=controller.valve, pumps=controller.pumps,
+                                    valve_ports=cfg.VALVE_PORTS, uv=None, dmd=None)
+            failed_pumps, valve_ok = controller.unavailable, controller.valve is not None
+        self.root.after(0, self._on_connected, ctx, failed_pumps, valve_ok)
 
-    def _on_connected(self, ctx):
-        self.ctx = ctx
+    def _on_connected(self, ctx, failed_pumps, valve_ok):
         self.connecting = False
+
+        if not ctx.pumps and not valve_ok:
+            # 아무 장비도 실제로 안 붙었으면 "Connected"라고 하면 안 됨
+            self.conn_status_label.configure(text="Connection failed - no devices responded")
+            self.connect_button.configure(state="normal")
+            self.set_status("IDLE")
+            return
+
+        self.ctx = ctx
         self.disconnect_button.configure(state="normal")
-        self.conn_status_label.configure(text="Connected")
+        if failed_pumps or not valve_ok:
+            problems = []
+            if not valve_ok:
+                problems.append("valve")
+            if failed_pumps:
+                problems.append(f"pumps: {', '.join(failed_pumps)}")
+            self.conn_status_label.configure(text=f"Connected (failed: {'; '.join(problems)})")
+        else:
+            self.conn_status_label.configure(text="Connected")
         self.set_status("IDLE")
 
         for btn in self.valve_buttons.values():
-            btn.configure(state="normal")
+            btn.configure(state="normal" if valve_ok else "disabled")
         self.dispense_button.configure(state="normal")
         self.pump_stop_button.configure(state="normal")
         self.prime_button.configure(state="normal")
