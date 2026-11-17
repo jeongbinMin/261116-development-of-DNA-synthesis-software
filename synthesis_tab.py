@@ -21,6 +21,7 @@ from dmd_mask_builder import build_all_masks_from_list
 from dmd_array_sequence import build_dmd_array_steps
 from synthesis_mode import build_context, COLUMN, DMD_ARRAY
 from mock_devices import MockDMD, MockUVSource
+from prime_dialog import PrimeDialog
 from experiment_log import ExperimentLog
 from steps import FluidStep, DmdExposeStep
 from display_names import load_display_names
@@ -112,7 +113,7 @@ def compute_cycle_template(steps: list, inp: dict):
 class ReagentCheckDialog(tk.Toplevel):
     """시작 전 '시약 충분한가' 확인 모달. 체크해야만 Confirm & Start 활성화."""
 
-    def __init__(self, root: tk.Tk, totals: dict, on_confirm):
+    def __init__(self, root: tk.Tk, totals: dict, on_confirm, preview_only: bool = False):
         super().__init__(root)
         self.title("Reagent Volume Check")
         self.configure(bg=BG_COLOR)
@@ -122,6 +123,7 @@ class ReagentCheckDialog(tk.Toplevel):
 
         self.on_confirm = on_confirm
         self.totals = totals
+        self.preview_only = preview_only
         self.unit_is_ml = False  # 클릭할 때마다 uL <-> mL 전환
 
         ttk.Label(self, text="Required volume per reagent for this recipe:",
@@ -143,18 +145,25 @@ class ReagentCheckDialog(tk.Toplevel):
             ttk.Label(self, text="(No fluid steps in this recipe.)",
                       background=BG_COLOR).pack(pady=5)
 
-        self.confirm_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            self, text="Sufficient reagents are prepared",
-            variable=self.confirm_var, command=self._on_check_toggle,
-        ).pack(anchor="w", padx=15, pady=15)
-
         btn_row = ttk.Frame(self)
-        btn_row.pack(fill="x", padx=15, pady=(0, 15))
-        self.confirm_button = ttk.Button(btn_row, text="Confirm & Start",
-                                          command=self._on_confirm_clicked, state="disabled")
-        self.confirm_button.pack(side="left")
-        ttk.Button(btn_row, text="Cancel", command=self.destroy).pack(side="left", padx=5)
+
+        if self.preview_only:
+            # Start를 누르기 전에 미리 용액량만 확인해보는 용도 - 체크박스나
+            # "시작" 의미 없이 그냥 닫기만 하면 됨
+            btn_row.pack(fill="x", padx=15, pady=15)
+            ttk.Button(btn_row, text="Close", command=self.destroy).pack(side="left")
+        else:
+            self.confirm_var = tk.BooleanVar(value=False)
+            ttk.Checkbutton(
+                self, text="Sufficient reagents are prepared",
+                variable=self.confirm_var, command=self._on_check_toggle,
+            ).pack(anchor="w", padx=15, pady=15)
+
+            btn_row.pack(fill="x", padx=15, pady=(0, 15))
+            self.confirm_button = ttk.Button(btn_row, text="Confirm & Start",
+                                              command=self._on_confirm_clicked, state="disabled")
+            self.confirm_button.pack(side="left")
+            ttk.Button(btn_row, text="Cancel", command=self.destroy).pack(side="left", padx=5)
 
     def _render_rows(self):
         unit = "mL" if self.unit_is_ml else "uL"
@@ -286,22 +295,29 @@ class SynthesisTab:
         self.stop_button = ttk.Button(run_frame, text="■", width=3, command=self._on_stop,
                                        state="disabled")
         self.stop_button.pack(side="left")
+
+        ttk.Separator(run_frame, orient="vertical").pack(side="left", fill="y", padx=10)
+        ttk.Button(run_frame, text="Reagent Volume",
+                   command=self._on_reagent_volume_click).pack(side="left")
+        ttk.Button(run_frame, text="Prime", command=self._on_prime_click).pack(side="left", padx=5)
+
         self.progress_label = ttk.Label(run_frame, text="Idle")
         self.progress_label.pack(side="left", padx=20)
 
-        # 02/03: Progress info cards (left) + Fluidic Path diagram (right)
+        # Progress info cards - 전체 너비로 따로 한 줄
+        cards_row = ttk.Frame(self.parent, padding=10)
+        cards_row.pack(fill="x")
+        self._build_progress_cards(cards_row)
+
+        # DMD Live Mask viewer (왼쪽) + Fluidic Path (오른쪽) - 참고 목업과 같은 배치
         middle = ttk.Frame(self.parent, padding=10)
-        middle.pack(fill="x")
-        self._build_progress_cards(middle)
+        middle.pack(fill="both", expand=True)
+        self._build_dmd_viewer(middle)
         self._build_fluidic_path(middle)
 
-        # 04/05: DMD Live Mask viewer (left) + Execution Log (right)
-        bottom = ttk.Frame(self.parent, padding=10)
-        bottom.pack(fill="both", expand=True)
-        self._build_dmd_viewer(bottom)
-
-        log_frame = ttk.LabelFrame(bottom, text="Execution Log", padding=5)
-        log_frame.pack(side="left", fill="both", expand=True, padx=(5, 0))
+        # Execution Log - 전체 너비
+        log_frame = ttk.LabelFrame(self.parent, text="Execution Log", padding=5)
+        log_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
         self.log_tree = ttk.Treeview(log_frame, columns=("time", "message"), show="headings")
         self.log_tree.heading("time", text="Time")
@@ -391,12 +407,11 @@ class SynthesisTab:
         }
         for i, key in enumerate(labels):
             card = ttk.Frame(frame, relief="groove", padding=8)
-            card.grid(row=i // 2, column=i % 2, padx=5, pady=5, sticky="nsew")
+            card.grid(row=0, column=i, padx=5, pady=5, sticky="nsew")
             ttk.Label(card, text=labels[key], font=("Segoe UI", 9)).pack(anchor="w")
             ttk.Label(card, textvariable=self.card_vars[key],
                       font=("Segoe UI", 14, "bold")).pack(anchor="w")
-        frame.grid_columnconfigure(0, weight=1)
-        frame.grid_columnconfigure(1, weight=1)
+            frame.grid_columnconfigure(i, weight=1)
 
     def _build_progress_ring(self, parent):
         """원형 진행률(%) 표시 + 그 아래 현재 단계/사이클 텍스트.
@@ -799,6 +814,21 @@ class SynthesisTab:
             self.root, totals,
             on_confirm=lambda: self._launch_run(steps, meta, inp),
         )
+
+    def _on_reagent_volume_click(self):
+        """Start를 누르기 전에, 지금 입력된 서열/프로토콜 기준으로 필요한
+        용액량만 미리 확인해보는 팝업 (장비 연결 없이 순수 계산만)."""
+        inp = self._read_inputs()
+        try:
+            steps, meta = self._build_recipe(inp)
+        except Exception as e:
+            self._log(f"[Input Error] {e}")
+            return
+        totals = compute_reagent_totals(steps)
+        ReagentCheckDialog(self.root, totals, on_confirm=lambda: None, preview_only=True)
+
+    def _on_prime_click(self):
+        PrimeDialog(self.root, self.simulate_var.get())
 
     def _launch_run(self, steps, meta, inp):
         self.stop_event.clear()
