@@ -256,14 +256,8 @@ class SynthesisTab:
         toolbar.pack(fill="x")
         col = 0
 
-        # 아래 "DMD Live Mask"/"Sequence Progress" 박스(dmd_viewer_content,
-        # 폭 380 + LabelFrame padding 10*2 = 400)와 좌우 폭을 맞추기 위해
-        # input_left도 같은 폭(400)으로 고정함. 안 그러면 내용물(파일
-        # 경로 입력칸)만큼만 좁게 차지해서 위/아래 박스 너비가 서로 달라
-        # 어긋나 보였음.
-        input_left = ttk.Frame(toolbar, width=400)
+        input_left = ttk.Frame(toolbar)
         input_left.grid(row=0, column=col, sticky="nsw")
-        input_left.pack_propagate(False)
         col += 1
 
         # Column synthesis inputs (파일만 - 간결하게)
@@ -442,15 +436,9 @@ class SynthesisTab:
 
         self.dmd_viewer_body = ttk.Frame(self.dmd_viewer_content)
 
-        # width/height=40,14는 아직 이미지가 없을 때(text 단위) 기준 최소
-        # 크기일 뿐이고, fill="both"+expand=True로 실제로는 Sequence
-        # Progress의 흰 칸(sequence_text, fill+expand로 꽉 채움)과 동일하게
-        # dmd_viewer_content 전체를 채움. (이게 없으면 이미지 로드 전엔
-        # 작은 흰 사각형만 가운데 뜨고 나머지는 배경색으로 남아 Column
-        # 쪽과 흰 면적이 눈에 띄게 달라 보였음)
         self.dmd_image_label = tk.Label(self.dmd_viewer_body, bg="white",
                                          width=40, height=14)
-        self.dmd_image_label.pack(fill="both", expand=True)
+        self.dmd_image_label.pack()
         self._dmd_photo = None  # PhotoImage 레퍼런스 유지용 (안 하면 GC로 사라짐)
 
         self.dmd_info_var = tk.StringVar(value="No mask loaded")
@@ -474,7 +462,7 @@ class SynthesisTab:
         else:
             self.sequence_view_frame.pack_forget()
             self.dmd_viewer_frame.configure(text="DMD Live Mask")
-            self.dmd_viewer_body.pack(fill="both", expand=True)
+            self.dmd_viewer_body.pack()
 
     def _render_sequence_view(self, sequence: str):
         """전체 서열을 보여주고, 아직 시작 전이라 강조 없이 그대로 표시."""
