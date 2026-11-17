@@ -274,41 +274,58 @@ class SynthesisTab:
         self._file_row(self.dmd_frame, "Sequence List:", self.seqlist_path_var, is_dir=False)
         self._file_row(self.dmd_frame, "Protocol Folder:", self.dmd_protocol_dir_var, is_dir=True)
 
-        # 아래 네 구획도 input_left/info_box와 똑같이 테두리 있는
-        # LabelFrame(제목 없이)으로 감싸서, 어디서부터 어디까지가 한
-        # 묶음인지 시각적으로 명확하게 구분되도록 함
-        run_controls_outer = ttk.LabelFrame(toolbar, padding=6)
-        run_controls_outer.grid(row=0, column=col, sticky="ns", padx=8)
+        # 아래 다섯 구획(Run controls / Reagent-Prime / Ring / Cycle-Step /
+        # Time info)을 각각 따로 테두리를 두르니 높이가 제각각이라
+        # 오히려 더 들쭉날쭉해 보였음 ("각 상자 크기가 다 들쭉날쭉").
+        # Execution Log처럼 하나의 깔끔한 박스로 보이도록, 이 다섯 구획을
+        # 전부 LabelFrame 하나(controls_outer) 안에 넣고, 구획 사이는
+        # 테두리 대신 세로 Separator로만 구분함.
+        controls_outer = ttk.LabelFrame(toolbar, padding=6)
+        controls_outer.grid(row=0, column=col, sticky="ns", padx=8)
         col += 1
-        run_controls = ttk.Frame(run_controls_outer)
-        run_controls.pack(expand=True)
-        self.start_button = ttk.Button(run_controls, text="▶", width=3, command=self._on_start)
+        ccol = 0
+
+        run_controls = ttk.Frame(controls_outer)
+        run_controls.grid(row=0, column=ccol, sticky="ns")
+        ccol += 1
+        run_controls_inner = ttk.Frame(run_controls)
+        run_controls_inner.pack(expand=True)
+        self.start_button = ttk.Button(run_controls_inner, text="▶", width=3, command=self._on_start)
         self.start_button.pack(side="left")
-        self.pause_button = ttk.Button(run_controls, text="⏸", width=3, command=self._on_pause,
+        self.pause_button = ttk.Button(run_controls_inner, text="⏸", width=3, command=self._on_pause,
                                         state="disabled")
         self.pause_button.pack(side="left", padx=5)
-        self.stop_button = ttk.Button(run_controls, text="■", width=3, command=self._on_stop,
+        self.stop_button = ttk.Button(run_controls_inner, text="■", width=3, command=self._on_stop,
                                        state="disabled")
         self.stop_button.pack(side="left")
 
-        reagent_prime_outer = ttk.LabelFrame(toolbar, padding=6)
-        reagent_prime_outer.grid(row=0, column=col, sticky="ns", padx=6)
-        col += 1
-        reagent_prime = ttk.Frame(reagent_prime_outer)
-        reagent_prime.pack(expand=True)
-        ttk.Button(reagent_prime, text="Reagent Volume",
+        ttk.Separator(controls_outer, orient="vertical").grid(row=0, column=ccol, sticky="ns", padx=10)
+        ccol += 1
+
+        reagent_prime = ttk.Frame(controls_outer)
+        reagent_prime.grid(row=0, column=ccol, sticky="ns")
+        ccol += 1
+        reagent_prime_inner = ttk.Frame(reagent_prime)
+        reagent_prime_inner.pack(expand=True)
+        ttk.Button(reagent_prime_inner, text="Reagent Volume",
                    command=self._on_reagent_volume_click).pack(side="top", fill="x")
-        ttk.Button(reagent_prime, text="Prime",
+        ttk.Button(reagent_prime_inner, text="Prime",
                    command=self._on_prime_click).pack(side="top", fill="x", pady=(4, 0))
 
-        ring_outer = ttk.LabelFrame(toolbar, padding=6)
-        ring_outer.grid(row=0, column=col, sticky="ns")
-        col += 1
-        self._build_progress_ring(ring_outer)
+        ttk.Separator(controls_outer, orient="vertical").grid(row=0, column=ccol, sticky="ns", padx=10)
+        ccol += 1
 
-        cycle_step_outer = ttk.LabelFrame(toolbar, padding=6)
-        cycle_step_outer.grid(row=0, column=col, sticky="ns", padx=8)
-        col += 1
+        ring_frame = ttk.Frame(controls_outer)
+        ring_frame.grid(row=0, column=ccol, sticky="ns")
+        ccol += 1
+        self._build_progress_ring(ring_frame)
+
+        ttk.Separator(controls_outer, orient="vertical").grid(row=0, column=ccol, sticky="ns", padx=10)
+        ccol += 1
+
+        cycle_step_outer = ttk.Frame(controls_outer)
+        cycle_step_outer.grid(row=0, column=ccol, sticky="ns")
+        ccol += 1
         cycle_step_frame = ttk.Frame(cycle_step_outer)
         cycle_step_frame.pack(expand=True)
         self.cycle_display_var = tk.StringVar(value="Cycle -/-")
@@ -318,13 +335,14 @@ class SynthesisTab:
         ttk.Label(cycle_step_frame, textvariable=self.step_display_var,
                   font=("Segoe UI", 10, "bold")).pack(anchor="w")
 
-        # Estimated Total / Elapsed / Remaining (Est.) / Finish (Est.) - 한 박스에 세로로.
-        # Estimated Total은 일시정지했다가 재개하면 그 멈춘 시간만큼 더해서
-        # 다시 계산됨 (실제 벽시계 기준 총 소요시간을 더 현실적으로 보여주기 위함)
-        info_box_outer = ttk.Frame(toolbar)
-        info_box_outer.grid(row=0, column=col, sticky="ns", padx=6)
-        col += 1
-        info_box = ttk.LabelFrame(info_box_outer, padding=6)
+        ttk.Separator(controls_outer, orient="vertical").grid(row=0, column=ccol, sticky="ns", padx=10)
+        ccol += 1
+
+        # Elapsed / Remaining (Est.) / Finish (Est.) - 한 박스에 세로로.
+        info_box_outer = ttk.Frame(controls_outer)
+        info_box_outer.grid(row=0, column=ccol, sticky="ns")
+        ccol += 1
+        info_box = ttk.Frame(info_box_outer)
         info_box.pack(expand=True)
         self.card_vars = {
             "elapsed": tk.StringVar(value="-"),
@@ -391,10 +409,20 @@ class SynthesisTab:
         self.dmd_viewer_frame = ttk.LabelFrame(parent, text="DMD Live Mask", padding=10)
         self.dmd_viewer_frame.pack(side="left", fill="both", padx=(0, 5))
 
+        # Column 모드의 "Sequence Progress" 상자와 DMD 모드의 "DMD Live
+        # Mask" 상자는 내용물(텍스트 줄 수 vs 이미지 높이)이 달라서 그냥
+        # 두면 dmd_viewer_frame 자체의 자연 크기가 모드마다 달라짐. 그래서
+        # 내용물을 고정 크기 컨테이너(dmd_viewer_content) 안에 넣고
+        # pack_propagate(False)로 안쪽 내용과 무관하게 바깥 크기를 고정함 -
+        # 모드를 바꿔도 이 박스 크기 자체는 항상 동일하게 유지됨.
+        self.dmd_viewer_content = tk.Frame(self.dmd_viewer_frame, width=380, height=360)
+        self.dmd_viewer_content.pack(fill="both", expand=True)
+        self.dmd_viewer_content.pack_propagate(False)
+
         # Column 모드에서는 DMD가 아예 안 쓰이므로, 그 자리에 "지금 어느
         # 염기를 합성 중인지" 보여주는 서열 뷰를 대신 넣음 - 전체 서열을
         # 쭉 보여주고 현재 진행 중인 염기만 다른 색으로 강조
-        self.sequence_view_frame = ttk.Frame(self.dmd_viewer_frame)
+        self.sequence_view_frame = ttk.Frame(self.dmd_viewer_content)
         self.sequence_text = tk.Text(
             self.sequence_view_frame, height=10, width=40, wrap="char",
             state="disabled", bg="white", font=("Consolas", 11)
@@ -406,7 +434,7 @@ class SynthesisTab:
                   font=("Segoe UI", 9)).pack(anchor="w", pady=(5, 0))
         self.loaded_sequence = ""
 
-        self.dmd_viewer_body = ttk.Frame(self.dmd_viewer_frame)
+        self.dmd_viewer_body = ttk.Frame(self.dmd_viewer_content)
 
         self.dmd_image_label = tk.Label(self.dmd_viewer_body, bg="white",
                                          width=40, height=14)
