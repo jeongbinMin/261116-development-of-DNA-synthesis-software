@@ -233,11 +233,16 @@ class SynthesisTab:
                         variable=self.simulate_var, command=self._on_simulate_change
                         ).grid(row=0, column=3, padx=20, sticky="w")
 
-        # DMD 연결 토글 - DMD Array 모드에서만 의미가 있으므로(Column 합성은
-        # DMD 자체를 안 씀), Column 모드일 땐 아예 숨김 (_on_mode_change에서
-        # grid()/grid_remove()로 전환). 같은 줄에 둬서 세로 공간도 아낌.
+        # DMD 연결 토글 - DMD Array 모드에서만 의미가 있음(Column 합성은 DMD
+        # 자체를 안 씀). 모드 바뀔 때마다 grid()/grid_remove()로 아예
+        # 뺐다꼈다 하면 이 줄의 높이가 미묘하게 달라져서(버튼이 있을 때/
+        # 없을 때 행 높이가 바뀜) 전체 레이아웃이 들썩였음. 그래서 항상 같은
+        # 자리에 grid해두고, Column 모드에선 비활성화만 시켜서 자리는
+        # 그대로 차지하되 누를 수만 없게 함 - 레이아웃 폭/높이가 고정됨.
         self.dmd_connect_button = ttk.Button(top, text="Connect DMD", command=self._on_toggle_dmd)
+        self.dmd_connect_button.grid(row=0, column=4, sticky="w", padx=(10, 5))
         self.dmd_status_label = ttk.Label(top, text="DMD: No DMD")
+        self.dmd_status_label.grid(row=0, column=5, sticky="w")
 
         # 실행 상태 바 - 파일 입력 + Play/Pause/Stop + Reagent Volume/Prime +
         # 진행률 링 + Cycle/Step + Elapsed/Remaining/Finish 를 한 줄에 배치
@@ -269,7 +274,10 @@ class SynthesisTab:
         self._file_row(self.dmd_frame, "Sequence List:", self.seqlist_path_var, is_dir=False)
         self._file_row(self.dmd_frame, "Protocol Folder:", self.dmd_protocol_dir_var, is_dir=True)
 
-        run_controls_outer = ttk.Frame(toolbar)
+        # 아래 네 구획도 input_left/info_box와 똑같이 테두리 있는
+        # LabelFrame(제목 없이)으로 감싸서, 어디서부터 어디까지가 한
+        # 묶음인지 시각적으로 명확하게 구분되도록 함
+        run_controls_outer = ttk.LabelFrame(toolbar, padding=6)
         run_controls_outer.grid(row=0, column=col, sticky="ns", padx=8)
         col += 1
         run_controls = ttk.Frame(run_controls_outer)
@@ -283,7 +291,7 @@ class SynthesisTab:
                                        state="disabled")
         self.stop_button.pack(side="left")
 
-        reagent_prime_outer = ttk.Frame(toolbar)
+        reagent_prime_outer = ttk.LabelFrame(toolbar, padding=6)
         reagent_prime_outer.grid(row=0, column=col, sticky="ns", padx=6)
         col += 1
         reagent_prime = ttk.Frame(reagent_prime_outer)
@@ -293,12 +301,12 @@ class SynthesisTab:
         ttk.Button(reagent_prime, text="Prime",
                    command=self._on_prime_click).pack(side="top", fill="x", pady=(4, 0))
 
-        ring_outer = ttk.Frame(toolbar)
+        ring_outer = ttk.LabelFrame(toolbar, padding=6)
         ring_outer.grid(row=0, column=col, sticky="ns")
         col += 1
         self._build_progress_ring(ring_outer)
 
-        cycle_step_outer = ttk.Frame(toolbar)
+        cycle_step_outer = ttk.LabelFrame(toolbar, padding=6)
         cycle_step_outer.grid(row=0, column=col, sticky="ns", padx=8)
         col += 1
         cycle_step_frame = ttk.Frame(cycle_step_outer)
@@ -810,14 +818,16 @@ class SynthesisTab:
             self.dmd_frame.pack_forget()
             self.dmd_params_frame.pack_forget()
             self.column_frame.pack(fill="x", pady=2)
-            self.dmd_connect_button.grid_remove()
-            self.dmd_status_label.grid_remove()
+            self.dmd_connect_button.configure(state="disabled")
+            self.dmd_status_label.configure(text="DMD: N/A (Column mode)")
         else:
             self.column_frame.pack_forget()
             self.dmd_frame.pack(fill="x", pady=2)
             self.dmd_params_frame.pack(fill="x", padx=10, pady=(0, 10))
-            self.dmd_connect_button.grid(row=0, column=4, sticky="w", padx=(10, 5))
-            self.dmd_status_label.grid(row=0, column=5, sticky="w")
+            self.dmd_connect_button.configure(state="normal")
+            self.dmd_status_label.configure(
+                text="DMD: Connected" if self.dmd is not None else "DMD: No DMD"
+            )
         if hasattr(self, "dmd_viewer_body"):
             self._update_dmd_viewer_visibility()
 
