@@ -285,8 +285,17 @@ class SynthesisTab:
 
         log_frame = ttk.LabelFrame(bottom, text="Execution Log", padding=5)
         log_frame.pack(side="left", fill="both", expand=True, padx=(5, 0))
-        self.log_text = tk.Text(log_frame, state="disabled", wrap="word", bg="white")
-        self.log_text.pack(fill="both", expand=True)
+
+        self.log_tree = ttk.Treeview(log_frame, columns=("time", "message"), show="headings")
+        self.log_tree.heading("time", text="Time")
+        self.log_tree.heading("message", text="Message")
+        self.log_tree.column("time", width=70, anchor="center", stretch=False)
+        self.log_tree.column("message", width=400, anchor="w")
+
+        log_vsb = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_tree.yview)
+        self.log_tree.configure(yscrollcommand=log_vsb.set)
+        self.log_tree.pack(side="left", fill="both", expand=True)
+        log_vsb.pack(side="left", fill="y")
 
     def _build_dmd_viewer(self, parent):
         self.dmd_viewer_frame = ttk.LabelFrame(parent, text="DMD Live Mask", padding=10)
@@ -722,18 +731,16 @@ class SynthesisTab:
 
     # ---------------- logging ----------------
     def _log(self, msg):
-        self.log_queue.put(msg)
+        self.log_queue.put((time.strftime("%H:%M:%S"), msg))
 
     def _poll_log_queue(self):
         while True:
             try:
-                msg = self.log_queue.get_nowait()
+                timestamp, msg = self.log_queue.get_nowait()
             except queue.Empty:
                 break
-            self.log_text.configure(state="normal")
-            self.log_text.insert("end", msg + "\n")
-            self.log_text.see("end")
-            self.log_text.configure(state="disabled")
+            self.log_tree.insert("", "end", values=(timestamp, msg))
+            self.log_tree.yview_moveto(1.0)
         self.root.after(100, self._poll_log_queue)
 
     # ---------------- execution ----------------
