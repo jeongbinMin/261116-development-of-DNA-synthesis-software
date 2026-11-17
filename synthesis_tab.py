@@ -193,18 +193,6 @@ class ReagentCheckDialog(tk.Toplevel):
 
 
 class SynthesisTab:
-    # Column/DMD Synthesis Input 상자와 아래쪽 DMD Live Mask/Sequence
-    # Progress 상자의 좌우 폭을 정확히 맞추기 위한 공용 상수. 두 군데
-    # 전부 이 값 하나로 LabelFrame 자체의 width를 고정(pack_propagate
-    # False)해서 쓰기 때문에, 내부 padding이 서로 달라도(6 vs 10) 바깥
-    # 테두리 폭은 항상 동일하게 맞음.
-    TOP_BOX_W = 400
-    # DMD 모듈의 실제 해상도(기본 1920x1080, 16:9)에 맞춰 마스크 미리보기
-    # 흰 칸의 가로세로 비율을 맞추기 위한 값. pixel_w_var/pixel_h_var가
-    # 바뀌어도 이 박스 자체는(최초 빌드 시점 기준으로) 고정되며, 실제
-    # 해상도 비율과 얼추 맞는 모습을 보여주는 용도.
-    DMD_ASPECT_W, DMD_ASPECT_H = 1920, 1080
-
     def __init__(self, parent: tk.Widget, root: tk.Tk, set_status=None, set_mode=None):
         self.parent = parent
         self.root = root
@@ -268,42 +256,29 @@ class SynthesisTab:
         toolbar.pack(fill="x")
         col = 0
 
-        # input_left 자체는 폭/높이를 강제하지 않고 "nw"로만 배치함 -
-        # 예전엔 "nsw"(세로로도 꽉 채움)를 쓰면서 input_left가 toolbar
-        # 행 전체 높이(제일 큰 옆 칸인 controls_outer 기준)까지 늘어나고,
-        # 그 안의 column_frame/dmd_frame은 짧아서 밑에 보기 싫은 빈
-        # 여백이 생겼었음. "nw"로 바꾸면 input_left는 내용물(파일 입력
-        # 2줄짜리 박스) 높이만큼만 차지하고, 남는 공간은 그냥 배경으로
-        # 남아 박스 모양의 어색한 여백처럼 안 보임.
-        input_left = ttk.Frame(toolbar)
-        input_left.grid(row=0, column=col, sticky="nw")
+        # 아래 "DMD Live Mask"/"Sequence Progress" 박스(dmd_viewer_content,
+        # 폭 380 + LabelFrame padding 10*2 = 400)와 좌우 폭을 맞추기 위해
+        # input_left도 같은 폭(400)으로 고정함. 안 그러면 내용물(파일
+        # 경로 입력칸)만큼만 좁게 차지해서 위/아래 박스 너비가 서로 달라
+        # 어긋나 보였음.
+        input_left = ttk.Frame(toolbar, width=400)
+        input_left.grid(row=0, column=col, sticky="nsw")
+        input_left.pack_propagate(False)
         col += 1
 
-        # Column/DMD Synthesis Input 상자 자체를 TOP_BOX_W로 고정(내용물과
-        # 무관하게) - 아래쪽 DMD Live Mask/Sequence Progress 박스와 좌우
-        # 폭을 정확히 맞추기 위함. height는 지정하지 않아 파일 입력 2줄
-        # 분량만큼만 자연스럽게 차지함(propagate는 가로만 의미 있으면
-        # 충분하므로 세로는 그대로 내용물 기준).
-        self.column_frame = ttk.LabelFrame(input_left, text="Column Synthesis Input",
-                                            padding=6, width=self.TOP_BOX_W)
+        # Column synthesis inputs (파일만 - 간결하게)
+        self.column_frame = ttk.LabelFrame(input_left, text="Column Synthesis Input", padding=6)
         self.seq_path_var = tk.StringVar()
         self.col_protocol_dir_var = tk.StringVar()
         self._file_row(self.column_frame, "Sequence File:", self.seq_path_var, is_dir=False)
         self._file_row(self.column_frame, "Protocol Folder:", self.col_protocol_dir_var, is_dir=True)
-        # 자식(file row)들을 다 pack한 "뒤에" propagate를 꺼야, 그 시점까지
-        # 자연스럽게 계산된 높이(두 줄 분량)는 유지한 채로 너비만 400으로
-        # 고정됨 - 순서를 바꾸면(자식 packing 전에 끄면) 아직 아무 내용도
-        # 없을 때 높이가 0으로 얼어붙어서 내용이 안 보이게 됨.
-        self.column_frame.pack_propagate(False)
 
         # DMD array synthesis inputs (파일만 - 세부 파라미터는 아래 dmd_params_frame)
-        self.dmd_frame = ttk.LabelFrame(input_left, text="DMD Array Synthesis Input",
-                                         padding=6, width=self.TOP_BOX_W)
+        self.dmd_frame = ttk.LabelFrame(input_left, text="DMD Array Synthesis Input", padding=6)
         self.seqlist_path_var = tk.StringVar()
         self.dmd_protocol_dir_var = tk.StringVar()
         self._file_row(self.dmd_frame, "Sequence List:", self.seqlist_path_var, is_dir=False)
         self._file_row(self.dmd_frame, "Protocol Folder:", self.dmd_protocol_dir_var, is_dir=True)
-        self.dmd_frame.pack_propagate(False)
 
         # 아래 다섯 구획(Run controls / Reagent-Prime / Ring / Cycle-Step /
         # Time info)을 각각 따로 테두리를 두르니 높이가 제각각이라
@@ -437,24 +412,8 @@ class SynthesisTab:
         log_vsb.pack(side="left", fill="y")
 
     def _build_dmd_viewer(self, parent):
-        # 바깥 LabelFrame 너비를 TOP_BOX_W로 고정 - 위쪽 Column/DMD
-        # Synthesis Input 상자와 좌우 폭을 정확히 맞추기 위함(같은 상수를
-        # 같은 방식(pack_propagate(False) 직접 지정)으로 적용하면 내부
-        # padding이 달라도 바깥 테두리 폭은 항상 동일함).
-        self.dmd_viewer_frame = ttk.LabelFrame(parent, text="DMD Live Mask",
-                                                padding=10, width=self.TOP_BOX_W)
-        self.dmd_viewer_frame.pack(side="left", padx=(0, 5))
-
-        content_w = self.TOP_BOX_W - 20  # LabelFrame padding(10) 양쪽 뺀 안쪽 폭
-        # DMD 마스크 미리보기 흰 칸은 실제 DMD 해상도(기본 1920x1080,
-        # 16:9) 비율대로 높이를 계산해서 보여줌 - 임의 정사각형에 가까운
-        # 비율로 두면 실제 마스크 이미지와 느낌이 달라 보임.
-        media_h = round(content_w * self.DMD_ASPECT_H / self.DMD_ASPECT_W)
-        # 이미지 아래 정보 텍스트 한 줄 + Previous/Next 버튼 한 줄 분량의
-        # 여유 공간(대략치, 실제 폰트/위젯 렌더링은 화면에서만 정확히
-        # 확인 가능 - 디스플레이 없는 환경이라 추정값으로 고정)
-        extra_h = 70
-        content_h = media_h + extra_h
+        self.dmd_viewer_frame = ttk.LabelFrame(parent, text="DMD Live Mask", padding=10)
+        self.dmd_viewer_frame.pack(side="left", fill="both", padx=(0, 5))
 
         # Column 모드의 "Sequence Progress" 상자와 DMD 모드의 "DMD Live
         # Mask" 상자는 내용물(텍스트 줄 수 vs 이미지 높이)이 달라서 그냥
@@ -462,7 +421,7 @@ class SynthesisTab:
         # 내용물을 고정 크기 컨테이너(dmd_viewer_content) 안에 넣고
         # pack_propagate(False)로 안쪽 내용과 무관하게 바깥 크기를 고정함 -
         # 모드를 바꿔도 이 박스 크기 자체는 항상 동일하게 유지됨.
-        self.dmd_viewer_content = tk.Frame(self.dmd_viewer_frame, width=content_w, height=content_h)
+        self.dmd_viewer_content = tk.Frame(self.dmd_viewer_frame, width=380, height=360)
         self.dmd_viewer_content.pack(fill="both", expand=True)
         self.dmd_viewer_content.pack_propagate(False)
 
@@ -483,13 +442,14 @@ class SynthesisTab:
 
         self.dmd_viewer_body = ttk.Frame(self.dmd_viewer_content)
 
-        # 이미지 영역을 media_h(실제 DMD 해상도 비율)로 고정된 별도
-        # 프레임에 넣어서, 아래 정보/버튼 줄이 몇 줄이 되든 이 흰 칸의
-        # 가로세로 비율 자체는 항상 16:9(실제 해상도 비율)로 유지되게 함.
-        image_area = tk.Frame(self.dmd_viewer_body, width=content_w, height=media_h)
-        image_area.pack(fill="x")
-        image_area.pack_propagate(False)
-        self.dmd_image_label = tk.Label(image_area, bg="white")
+        # width/height=40,14는 아직 이미지가 없을 때(text 단위) 기준 최소
+        # 크기일 뿐이고, fill="both"+expand=True로 실제로는 Sequence
+        # Progress의 흰 칸(sequence_text, fill+expand로 꽉 채움)과 동일하게
+        # dmd_viewer_content 전체를 채움. (이게 없으면 이미지 로드 전엔
+        # 작은 흰 사각형만 가운데 뜨고 나머지는 배경색으로 남아 Column
+        # 쪽과 흰 면적이 눈에 띄게 달라 보였음)
+        self.dmd_image_label = tk.Label(self.dmd_viewer_body, bg="white",
+                                         width=40, height=14)
         self.dmd_image_label.pack(fill="both", expand=True)
         self._dmd_photo = None  # PhotoImage 레퍼런스 유지용 (안 하면 GC로 사라짐)
 
@@ -505,11 +465,6 @@ class SynthesisTab:
         self.mask_results = []
         self.mask_preview_index = 0
         self._update_dmd_viewer_visibility()
-        # dmd_viewer_content가 이미 가로/세로를 고정했으므로, 여기서
-        # dmd_viewer_frame의 propagate를 꺼서 바깥 LabelFrame 크기도
-        # (padding 포함해서) 그대로 고정 - 모드 전환/내용 변경과 무관하게
-        # 위쪽 입력 상자와 정확히 같은 폭을 유지함.
-        self.dmd_viewer_frame.pack_propagate(False)
 
     def _update_dmd_viewer_visibility(self):
         if self.mode_var.get() == COLUMN:
@@ -703,18 +658,9 @@ class SynthesisTab:
         canvas_w = waste_x1 + 20
         canvas_h = max(square_center_y(n - 1) + sq_h / 2, cy + r + 95) + 20
 
-        # 창을 처음 열었을 때 가로폭이 좁으면(예: 작은 화면, 기본
-        # 시작 크기) 이 그림이 그냥 잘려서 안 보이는 문제가 있었음.
-        # 디스플레이 없는 환경이라 실제 창 크기를 보고 맞출 수가 없어서,
-        # 대신 가로 스크롤바를 달아 "공간이 부족하면 스크롤해서라도 볼 수
-        # 있게" 함 - 공간이 충분하면 스크롤바는 그냥 끝까지 찬 상태로
-        # 있고, 부족할 때만 실제로 쓰이게 됨.
-        self.fluidic_canvas = tk.Canvas(frame, bg="white", highlightthickness=0,
-                                         scrollregion=(0, 0, canvas_w, canvas_h))
-        h_scroll = ttk.Scrollbar(frame, orient="horizontal", command=self.fluidic_canvas.xview)
-        self.fluidic_canvas.configure(xscrollcommand=h_scroll.set)
-        h_scroll.pack(side="bottom", fill="x")
-        self.fluidic_canvas.pack(fill="both", expand=True)
+        self.fluidic_canvas = tk.Canvas(frame, width=canvas_w, height=canvas_h,
+                                         bg="white", highlightthickness=0)
+        self.fluidic_canvas.pack()
         self._rv_center = (cx, cy)
 
         self.port_points = {k + 1: self._hole_point(cx, cy, r, k) for k in range(n)}
