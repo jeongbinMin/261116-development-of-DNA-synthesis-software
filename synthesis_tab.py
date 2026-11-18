@@ -16,7 +16,6 @@ import tkinter as tk
 from tkinter import filedialog, ttk
 
 import devices_config as cfg
-import theme
 from column_parser import build_column_sequence, read_sequence, load_monomer_protocol
 from dmd_mask_builder import build_all_masks_from_list
 from dmd_array_sequence import build_dmd_array_steps
@@ -27,10 +26,10 @@ from experiment_log import ExperimentLog
 from steps import FluidStep, DmdExposeStep
 from display_names import load_display_names
 
-BG_COLOR = theme.BG
+BG_COLOR = "#f2f2f2"
 
-VALVE_IDLE_COLOR = "#dde1e8"
-VALVE_ACTIVE_COLOR = theme.ACCENT
+VALVE_IDLE_COLOR = "#d9d9d9"
+VALVE_ACTIVE_COLOR = "#333333"
 
 
 def compute_reagent_totals(steps: list) -> dict:
@@ -194,10 +193,6 @@ class ReagentCheckDialog(tk.Toplevel):
 
 
 class SynthesisTab:
-    # DMD 모듈의 실제 해상도(기본 1920x1080, 16:9) - 마스크 미리보기 흰
-    # 칸의 가로세로 비율을 여기에 맞춰서 창 크기가 바뀌어도 유지함.
-    DMD_ASPECT_W, DMD_ASPECT_H = 1920, 1080
-
     def __init__(self, parent: tk.Widget, root: tk.Tk, set_status=None, set_mode=None):
         self.parent = parent
         self.root = root
@@ -222,65 +217,149 @@ class SynthesisTab:
         self._poll_log_queue()
 
     # ---------------- UI layout ----------------
-    def _pl(self, parent, text="", **kw):
-        """패널(흰 배경) 안에 놓는 Label. 패널 밖(회색 배경)에 놓는
-        plain ttk.Label과 배경색이 달라서, 이 헬퍼로 매번 Panel.TLabel
-        스타일을 빠뜨리지 않게 함."""
-        kw.setdefault("style", "Panel.TLabel")
-        return ttk.Label(parent, text=text, **kw)
-
     def _build_widgets(self):
-        # 공통 Grid 시스템 - parent 전체를 하나의 grid로 묶어서 모든 행의
-        # 좌우 경계와 폭 비율(35:65)을 단일 소스로 관리함. 같은 열(column)에
-        # 속한 패널은 자동으로 폭이 같아지고, 같은 행(row)에 속한 패널은
-        # 자동으로 높이가 같아지므로("Synthesis Input과 Sequence Progress의
-        # 좌우 경계 및 너비 통일", "Operation & Progress와 Fluidic Path의
-        # 좌우 경계 및 너비 통일", "동일 행에 위치한 패널의 높이 통일") 예전
-        # 처럼 픽셀 폭/높이를 수동으로 맞추는 임시방편이 전혀 필요 없어짐.
-        # 창 크기를 바꾸면 weight 비율에 따라 모든 영역이 같이 늘어나거나
-        # 줄어듦("창 크기 변경 시 모든 영역이 동적으로 조절").
-        self.parent.grid_columnconfigure(0, weight=35, uniform="maincol")
-        self.parent.grid_columnconfigure(1, weight=65, uniform="maincol")
-        self.parent.grid_rowconfigure(2, weight=3)   # Synthesis Input | Operation & Progress
-        self.parent.grid_rowconfigure(3, weight=5)   # Sequence Progress/DMD Mask | Fluidic Path
-        self.parent.grid_rowconfigure(4, weight=2)   # Execution Log
-        row = 0
+        top = ttk.Frame(self.parent, padding=(10, 6))
+        top.pack(fill="x")
 
-        # ---- Synthesis Mode 바 (전체 폭, 패널 테두리 없이 - 목업과 동일) ----
-        top = ttk.Frame(self.parent)
-        top.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(0, theme.GAP))
-        row += 1
-
-        ttk.Label(top, text="Synthesis Mode", style="Heading.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(top, text="Synthesis Mode:").grid(row=0, column=0, sticky="w")
         self.mode_var = tk.StringVar(value=COLUMN)
-        ttk.Radiobutton(top, text="Column", variable=self.mode_var, value=COLUMN,
-                         command=self._on_mode_change).grid(row=0, column=1, sticky="w", padx=(16, 0))
-        ttk.Radiobutton(top, text="DMD Array", variable=self.mode_var, value=DMD_ARRAY,
-                         command=self._on_mode_change).grid(row=0, column=2, sticky="w", padx=(10, 0))
+        ttk.Radiobutton(top, text="Column Synthesis", variable=self.mode_var, value=COLUMN,
+                         command=self._on_mode_change).grid(row=0, column=1, sticky="w")
+        ttk.Radiobutton(top, text="DMD Array Synthesis", variable=self.mode_var, value=DMD_ARRAY,
+                         command=self._on_mode_change).grid(row=0, column=2, sticky="w")
 
         self.simulate_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(top, text="Simulation Mode", variable=self.simulate_var,
-                        command=self._on_simulate_change).grid(row=0, column=3, sticky="w", padx=(24, 0))
-
-        top.grid_columnconfigure(4, weight=1)  # 가운데를 늘려서 Connect DMD를 오른쪽 끝에 붙임
+        ttk.Checkbutton(top, text="Simulation Mode (Mock, test without hardware)",
+                        variable=self.simulate_var, command=self._on_simulate_change
+                        ).grid(row=0, column=3, padx=20, sticky="w")
 
         # DMD 연결 토글 - DMD Array 모드에서만 의미가 있음(Column 합성은 DMD
-        # 자체를 안 씀). 모드가 바뀌어도 항상 같은 자리에 grid해두고
-        # Column 모드에선 비활성화만 시켜서(자리는 유지) 레이아웃이 들썩이지
-        # 않게 함.
+        # 자체를 안 씀). 모드 바뀔 때마다 grid()/grid_remove()로 아예
+        # 뺐다꼈다 하면 이 줄의 높이가 미묘하게 달라져서(버튼이 있을 때/
+        # 없을 때 행 높이가 바뀜) 전체 레이아웃이 들썩였음. 그래서 항상 같은
+        # 자리에 grid해두고, Column 모드에선 비활성화만 시켜서 자리는
+        # 그대로 차지하되 누를 수만 없게 함 - 레이아웃 폭/높이가 고정됨.
         self.dmd_connect_button = ttk.Button(top, text="Connect DMD", command=self._on_toggle_dmd)
-        self.dmd_connect_button.grid(row=0, column=5, sticky="e", padx=(10, 10))
+        self.dmd_connect_button.grid(row=0, column=4, sticky="w", padx=(10, 5))
         self.dmd_status_label = ttk.Label(top, text="DMD: No DMD")
-        self.dmd_status_label.grid(row=0, column=6, sticky="e")
+        self.dmd_status_label.grid(row=0, column=5, sticky="w")
 
-        # ---- DMD Array 전용 세부 파라미터 (전체 폭, DMD Array 모드일 때만) ----
-        self.dmd_params_frame = theme.panel(self.parent, "DMD Array Parameters")
-        self.dmd_params_frame.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(0, theme.GAP))
-        self._dmd_params_grid_row = row
-        row += 1
+        # 실행 상태 바 - 파일 입력 + Play/Pause/Stop + Reagent Volume/Prime +
+        # 진행률 링 + Cycle/Step + Elapsed/Remaining/Finish 를 한 줄에 배치
+        # (참고 목업과 같은 구조). DMD Array 전용 세부 파라미터(해상도/bin/
+        # 노광시간 등)는 항목이 많아서 이 줄이 아니라 바로 아래 별도 줄에 둠.
+        # 각 구획을 grid의 한 행에 나란히 놓고 sticky="ns"로 행 높이를 전부
+        # 맞춘 뒤, 안쪽 내용물은 pack(expand=True)로 그 안에서 세로 가운데
+        # 정렬 - 높이가 서로 다른 블록(2줄짜리 파일 입력 vs 버튼 vs 링)이
+        # 전부 위쪽 기준으로 들쭉날쭉 떠 있던 것을 가운데 기준으로 맞춤.
+        toolbar = ttk.Frame(self.parent, padding=(10, 4))
+        toolbar.pack(fill="x")
+        col = 0
 
-        params = ttk.Frame(self.dmd_params_frame, style="Panel.TFrame")
-        params.pack(fill="x")
+        input_left = ttk.Frame(toolbar)
+        input_left.grid(row=0, column=col, sticky="nsw")
+        col += 1
+
+        # Column synthesis inputs (파일만 - 간결하게)
+        self.column_frame = ttk.LabelFrame(input_left, text="Column Synthesis Input", padding=6)
+        self.seq_path_var = tk.StringVar()
+        self.col_protocol_dir_var = tk.StringVar()
+        self._file_row(self.column_frame, "Sequence File:", self.seq_path_var, is_dir=False)
+        self._file_row(self.column_frame, "Protocol Folder:", self.col_protocol_dir_var, is_dir=True)
+
+        # DMD array synthesis inputs (파일만 - 세부 파라미터는 아래 dmd_params_frame)
+        self.dmd_frame = ttk.LabelFrame(input_left, text="DMD Array Synthesis Input", padding=6)
+        self.seqlist_path_var = tk.StringVar()
+        self.dmd_protocol_dir_var = tk.StringVar()
+        self._file_row(self.dmd_frame, "Sequence List:", self.seqlist_path_var, is_dir=False)
+        self._file_row(self.dmd_frame, "Protocol Folder:", self.dmd_protocol_dir_var, is_dir=True)
+
+        # 아래 다섯 구획(Run controls / Reagent-Prime / Ring / Cycle-Step /
+        # Time info)을 각각 따로 테두리를 두르니 높이가 제각각이라
+        # 오히려 더 들쭉날쭉해 보였음 ("각 상자 크기가 다 들쭉날쭉").
+        # Execution Log처럼 하나의 깔끔한 박스로 보이도록, 이 다섯 구획을
+        # 전부 LabelFrame 하나(controls_outer) 안에 넣고, 구획 사이는
+        # 테두리 대신 세로 Separator로만 구분함.
+        controls_outer = ttk.LabelFrame(toolbar, padding=6)
+        controls_outer.grid(row=0, column=col, sticky="ns", padx=8)
+        col += 1
+        ccol = 0
+
+        run_controls = ttk.Frame(controls_outer)
+        run_controls.grid(row=0, column=ccol, sticky="ns")
+        ccol += 1
+        run_controls_inner = ttk.Frame(run_controls)
+        run_controls_inner.pack(expand=True)
+        self.start_button = ttk.Button(run_controls_inner, text="▶", width=3, command=self._on_start)
+        self.start_button.pack(side="left")
+        self.pause_button = ttk.Button(run_controls_inner, text="⏸", width=3, command=self._on_pause,
+                                        state="disabled")
+        self.pause_button.pack(side="left", padx=5)
+        self.stop_button = ttk.Button(run_controls_inner, text="■", width=3, command=self._on_stop,
+                                       state="disabled")
+        self.stop_button.pack(side="left")
+
+        ttk.Separator(controls_outer, orient="vertical").grid(row=0, column=ccol, sticky="ns", padx=10)
+        ccol += 1
+
+        reagent_prime = ttk.Frame(controls_outer)
+        reagent_prime.grid(row=0, column=ccol, sticky="ns")
+        ccol += 1
+        reagent_prime_inner = ttk.Frame(reagent_prime)
+        reagent_prime_inner.pack(expand=True)
+        ttk.Button(reagent_prime_inner, text="Reagent Volume",
+                   command=self._on_reagent_volume_click).pack(side="top", fill="x")
+        ttk.Button(reagent_prime_inner, text="Prime",
+                   command=self._on_prime_click).pack(side="top", fill="x", pady=(4, 0))
+
+        ttk.Separator(controls_outer, orient="vertical").grid(row=0, column=ccol, sticky="ns", padx=10)
+        ccol += 1
+
+        ring_frame = ttk.Frame(controls_outer)
+        ring_frame.grid(row=0, column=ccol, sticky="ns")
+        ccol += 1
+        self._build_progress_ring(ring_frame)
+
+        ttk.Separator(controls_outer, orient="vertical").grid(row=0, column=ccol, sticky="ns", padx=10)
+        ccol += 1
+
+        cycle_step_outer = ttk.Frame(controls_outer)
+        cycle_step_outer.grid(row=0, column=ccol, sticky="ns")
+        ccol += 1
+        cycle_step_frame = ttk.Frame(cycle_step_outer)
+        cycle_step_frame.pack(expand=True)
+        self.cycle_display_var = tk.StringVar(value="Cycle -/-")
+        self.step_display_var = tk.StringVar(value="Step -/-")
+        ttk.Label(cycle_step_frame, textvariable=self.cycle_display_var,
+                  font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        ttk.Label(cycle_step_frame, textvariable=self.step_display_var,
+                  font=("Segoe UI", 10, "bold")).pack(anchor="w")
+
+        ttk.Separator(controls_outer, orient="vertical").grid(row=0, column=ccol, sticky="ns", padx=10)
+        ccol += 1
+
+        # Elapsed / Remaining (Est.) / Finish (Est.) - 한 박스에 세로로.
+        info_box_outer = ttk.Frame(controls_outer)
+        info_box_outer.grid(row=0, column=ccol, sticky="ns")
+        ccol += 1
+        info_box = ttk.Frame(info_box_outer)
+        info_box.pack(expand=True)
+        self.card_vars = {
+            "elapsed": tk.StringVar(value="-"),
+            "remaining": tk.StringVar(value="-"),
+            "finish_est": tk.StringVar(value="-"),
+        }
+        info_rows = (("elapsed", "Running time"), ("remaining", "Remaining time"),
+                     ("finish_est", "Finish time"))
+        for r, (key, label) in enumerate(info_rows):
+            ttk.Label(info_box, text=label).grid(row=r, column=0, sticky="w", padx=(0, 10))
+            ttk.Label(info_box, textvariable=self.card_vars[key],
+                      font=("Segoe UI", 10, "bold")).grid(row=r, column=1, sticky="e")
+
+        # DMD Array 전용 세부 파라미터 - 항목이 많아서 입력 줄 바로 아래 별도로
+        self.dmd_params_frame = ttk.LabelFrame(self.parent, text="DMD Array Parameters", padding=8)
+        params = ttk.Frame(self.dmd_params_frame)
+        params.pack(fill="x", pady=2)
         self.pixel_w_var = tk.IntVar(value=1920)
         self.pixel_h_var = tk.IntVar(value=1080)
         self.bin_w_var = tk.IntVar(value=1)
@@ -295,201 +374,85 @@ class SynthesisTab:
         self._num_entry(params, "Bin Width:", self.bin_w_var, 1, 0)
         self._num_entry(params, "Bin Height:", self.bin_h_var, 1, 2)
         self._num_entry(params, "Replicates:", self.replicates_var, 2, 0)
-        ttk.Checkbutton(params, text="Randomize Placement", variable=self.randomize_var,
-                         style="Panel.TCheckbutton").grid(row=2, column=2, sticky="w")
+        ttk.Checkbutton(params, text="Randomize Placement", variable=self.randomize_var).grid(row=2, column=2, sticky="w")
         self._num_entry(params, "Exposure Time (s):", self.exposure_time_var, 3, 0)
         self._num_entry(params, "UV Current (A):", self.uv_current_var, 3, 2)
 
-        # ---- Row: Synthesis Input (좌, 35%) | Operation & Progress (우, 65%) ----
-        self._build_synthesis_input(self.parent, row)
-        self._build_operation_panel(self.parent, row)
-        row += 1
+        self._on_mode_change()
+        self._on_simulate_change()
 
-        # ---- Row: Sequence Progress/DMD Live Mask (좌) | Fluidic Path (우) ----
-        self._build_dmd_viewer(self.parent, row)
-        self._build_fluidic_path(self.parent, row)
-        row += 1
+        # DMD Live Mask viewer (왼쪽) + Fluidic Path (오른쪽) - 참고 목업과 같은 배치
+        middle = ttk.Frame(self.parent, padding=(10, 4))
+        middle.pack(fill="both", expand=True)
+        self._build_dmd_viewer(middle)
+        self._build_fluidic_path(middle)
 
-        # ---- Execution Log - 전체 폭 ----
-        log_frame = theme.panel(self.parent, "Execution Log")
-        log_frame.grid(row=row, column=0, columnspan=2, sticky="nsew")
-        row += 1
+        # Execution Log - 전체 너비
+        log_frame = ttk.LabelFrame(self.parent, text="Execution Log", padding=5)
+        log_frame.pack(fill="both", expand=True, padx=10, pady=(0, 6))
 
-        log_body = ttk.Frame(log_frame, style="Panel.TFrame")
-        log_body.pack(fill="both", expand=True)
-        # height를 작게 줘서 기본 요구 공간을 줄여둠 - fill="both"+expand=True라
-        # 행에 공간이 남으면(weight 기반) 어차피 더 늘어남
-        self.log_tree = ttk.Treeview(log_body, columns=("time", "message"), show="headings", height=5)
+        # height를 명시적으로 작게 줘서 기본값(플랫폼에 따라 10행 안팎)만큼
+        # 세로 공간을 미리 요구하지 않게 함 - fill="both"+expand=True라
+        # 공간이 남으면 어차피 더 늘어남
+        self.log_tree = ttk.Treeview(log_frame, columns=("time", "message"), show="headings", height=5)
         self.log_tree.heading("time", text="Time")
         self.log_tree.heading("message", text="Message")
         self.log_tree.column("time", width=70, anchor="center", stretch=False)
         self.log_tree.column("message", width=400, anchor="w")
 
-        log_vsb = ttk.Scrollbar(log_body, orient="vertical", command=self.log_tree.yview)
+        log_vsb = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_tree.yview)
         self.log_tree.configure(yscrollcommand=log_vsb.set)
         self.log_tree.pack(side="left", fill="both", expand=True)
         log_vsb.pack(side="left", fill="y")
 
-        self._on_mode_change()
-        self._on_simulate_change()
+    def _build_dmd_viewer(self, parent):
+        self.dmd_viewer_frame = ttk.LabelFrame(parent, text="DMD Live Mask", padding=10)
+        self.dmd_viewer_frame.pack(side="left", fill="both", padx=(0, 5))
 
-    def _build_synthesis_input(self, parent, row):
-        """Column/DMD Array 파일 입력 패널 (좌측 열, 35%)."""
-        outer = theme.panel(parent, "Synthesis Input")
-        outer.grid(row=row, column=0, sticky="nsew", padx=(0, theme.GAP), pady=(0, theme.GAP))
-
-        # Column synthesis inputs
-        self.column_frame = ttk.Frame(outer, style="Panel.TFrame")
-        self.seq_path_var = tk.StringVar()
-        self.col_protocol_dir_var = tk.StringVar()
-        self._file_row(self.column_frame, "Sequence File", self.seq_path_var, is_dir=False)
-        self._file_row(self.column_frame, "Protocol Folder", self.col_protocol_dir_var, is_dir=True)
-
-        # DMD array synthesis inputs (세부 파라미터는 위쪽 dmd_params_frame)
-        self.dmd_frame = ttk.Frame(outer, style="Panel.TFrame")
-        self.seqlist_path_var = tk.StringVar()
-        self.dmd_protocol_dir_var = tk.StringVar()
-        self._file_row(self.dmd_frame, "Sequence List", self.seqlist_path_var, is_dir=False)
-        self._file_row(self.dmd_frame, "Protocol Folder", self.dmd_protocol_dir_var, is_dir=True)
-
-    def _build_operation_panel(self, parent, row):
-        """Start/Pause/Stop/Reagent Volume/Prime + 진행률 바 + Cycle/Step/
-        Elapsed/Remaining/Finish (우측 열, 65%)."""
-        outer = theme.panel(parent, "Operation & Progress")
-        outer.grid(row=row, column=1, sticky="nsew", pady=(0, theme.GAP))
-
-        # 버튼 5개를 같은 줄에, 같은 스타일(TButton)로 둬서 높이가 전부
-        # 동일하게 정렬되도록 함 - 예전처럼 아이콘 버튼(width=3)과
-        # 텍스트 버튼을 다른 묶음으로 나누지 않음.
-        btn_row = ttk.Frame(outer, style="Panel.TFrame")
-        btn_row.pack(fill="x")
-        self.start_button = ttk.Button(btn_row, text="▶  Start", style="Accent.TButton",
-                                        command=self._on_start)
-        self.start_button.pack(side="left")
-        self.pause_button = ttk.Button(btn_row, text="⏸  Pause", command=self._on_pause,
-                                        state="disabled")
-        self.pause_button.pack(side="left", padx=(theme.GAP // 2, 0))
-        self.stop_button = ttk.Button(btn_row, text="■  Stop", command=self._on_stop,
-                                       state="disabled")
-        self.stop_button.pack(side="left", padx=(theme.GAP // 2, 0))
-        ttk.Button(btn_row, text="Reagent Volume",
-                   command=self._on_reagent_volume_click).pack(side="left", padx=(theme.GAP // 2, 0))
-        ttk.Button(btn_row, text="Prime",
-                   command=self._on_prime_click).pack(side="left", padx=(theme.GAP // 2, 0))
-
-        # 원형 진행률 링 대신 수평 Progress Bar
-        progress_head = ttk.Frame(outer, style="Panel.TFrame")
-        progress_head.pack(fill="x", pady=(theme.GAP, 4))
-        self._pl(progress_head, "Synthesis Progress", style="PanelHeading.TLabel").pack(side="left")
-        self.progress_percent_var = tk.StringVar(value="0%")
-        self._pl(progress_head, textvariable=self.progress_percent_var,
-                  style="Value.TLabel").pack(side="right")
-
-        self.progress_bar = ttk.Progressbar(outer, orient="horizontal", mode="determinate",
-                                             maximum=100, value=0)
-        self.progress_bar.pack(fill="x")
-
-        self.stage_var = tk.StringVar(value="Stage: Idle")
-        self._pl(outer, textvariable=self.stage_var,
-                 style="PanelMuted.TLabel").pack(anchor="w", pady=(6, 0))
-
-        self.cycle_template_len = 0
-        self.cycle_total_cycles = 1
-        self.cycle_stage_labels = []
-
-        # Cycle / Step / Elapsed / Remaining / Finish - 한 줄에 균등 간격으로.
-        # grid의 5개 열에 weight=1을 줘서 "일정한 간격으로 배치"를 레이아웃
-        # 엔진이 직접 보장하게 함(수동으로 padx 계산할 필요 없음).
-        info_row = ttk.Frame(outer, style="Panel.TFrame")
-        info_row.pack(fill="x", pady=(theme.GAP, 0))
-        for c in range(5):
-            info_row.grid_columnconfigure(c, weight=1)
-
-        self.cycle_display_var = tk.StringVar(value="Cycle -/-")
-        self.step_display_var = tk.StringVar(value="Step -/-")
-        self.card_vars = {
-            "elapsed": tk.StringVar(value="-"),
-            "remaining": tk.StringVar(value="-"),
-            "finish_est": tk.StringVar(value="-"),
-        }
-        info_cells = (
-            ("Cycle", self.cycle_display_var, True),
-            ("Step", self.step_display_var, True),
-            ("Elapsed", self.card_vars["elapsed"], False),
-            ("Remaining", self.card_vars["remaining"], False),
-            ("Finish", self.card_vars["finish_est"], False),
-        )
-        for c, (label, var, is_full_text) in enumerate(info_cells):
-            cell = ttk.Frame(info_row, style="Panel.TFrame")
-            cell.grid(row=0, column=c, sticky="w")
-            if is_full_text:
-                # cycle_display_var/step_display_var는 "Cycle 3/20"처럼 라벨을
-                # 이미 포함하고 있으므로(기존 로직 그대로) 값만 굵게 표시
-                self._pl(cell, textvariable=var, style="Value.TLabel").pack(anchor="w")
-            else:
-                self._pl(cell, label, style="PanelMuted.TLabel").pack(anchor="w")
-                self._pl(cell, textvariable=var, style="Value.TLabel").pack(anchor="w")
-
-    def _build_dmd_viewer(self, parent, row):
-        # 좌측 열(column=0)에 Synthesis Input 패널과 같은 열/같은 폭으로
-        # grid - "Synthesis Input과 Sequence Progress의 좌우 경계 및 너비
-        # 통일"이 grid 열 공유만으로 자동 보장됨(별도 픽셀 고정 불필요).
-        self.dmd_viewer_frame = theme.panel(parent, "DMD Live Mask")
-        self.dmd_viewer_frame.grid(row=row, column=0, sticky="nsew", padx=(0, theme.GAP))
+        # Column 모드의 "Sequence Progress" 상자와 DMD 모드의 "DMD Live
+        # Mask" 상자는 내용물(텍스트 줄 수 vs 이미지 높이)이 달라서 그냥
+        # 두면 dmd_viewer_frame 자체의 자연 크기가 모드마다 달라짐. 그래서
+        # 내용물을 고정 크기 컨테이너(dmd_viewer_content) 안에 넣고
+        # pack_propagate(False)로 안쪽 내용과 무관하게 바깥 크기를 고정함 -
+        # 모드를 바꿔도 이 박스 크기 자체는 항상 동일하게 유지됨.
+        self.dmd_viewer_content = tk.Frame(self.dmd_viewer_frame, width=380, height=360)
+        self.dmd_viewer_content.pack(fill="both", expand=True)
+        self.dmd_viewer_content.pack_propagate(False)
 
         # Column 모드에서는 DMD가 아예 안 쓰이므로, 그 자리에 "지금 어느
         # 염기를 합성 중인지" 보여주는 서열 뷰를 대신 넣음 - 전체 서열을
         # 쭉 보여주고 현재 진행 중인 염기만 다른 색으로 강조
-        self.sequence_view_frame = ttk.Frame(self.dmd_viewer_frame, style="Panel.TFrame")
+        self.sequence_view_frame = ttk.Frame(self.dmd_viewer_content)
         self.sequence_text = tk.Text(
-            self.sequence_view_frame, height=10, wrap="char",
-            state="disabled", bg="white", relief="solid", borderwidth=theme.BORDER_W,
-            font=theme.FONT_MONO,
+            self.sequence_view_frame, height=10, width=40, wrap="char",
+            state="disabled", bg="white", font=("Consolas", 11)
         )
         self.sequence_text.pack(fill="both", expand=True)
-        self.sequence_text.tag_configure("current", background=theme.ACCENT, foreground="white")
+        self.sequence_text.tag_configure("current", background="#333333", foreground="white")
         self.sequence_info_var = tk.StringVar(value="No sequence loaded")
-        self._pl(self.sequence_view_frame, textvariable=self.sequence_info_var,
-                 style="PanelMuted.TLabel").pack(anchor="w", pady=(6, 0))
+        ttk.Label(self.sequence_view_frame, textvariable=self.sequence_info_var,
+                  font=("Segoe UI", 9)).pack(anchor="w", pady=(5, 0))
         self.loaded_sequence = ""
 
-        self.dmd_viewer_body = ttk.Frame(self.dmd_viewer_frame, style="Panel.TFrame")
+        self.dmd_viewer_body = ttk.Frame(self.dmd_viewer_content)
 
-        # 마스크 미리보기 흰 칸 - 실제 DMD 해상도 비율(기본 1920x1080,
-        # 16:9)을 유지하도록, 창 크기가 바뀔 때마다 <Configure>에서 현재
-        # 폭에 맞춰 높이를 다시 계산해서 맞춤(아래 _on_image_area_resize).
-        self.dmd_image_area = tk.Frame(self.dmd_viewer_body, bg="white",
-                                        highlightbackground=theme.BORDER,
-                                        highlightthickness=theme.BORDER_W)
-        self.dmd_image_area.pack(fill="x")
-        self.dmd_image_area.bind("<Configure>", self._on_image_area_resize)
-        self.dmd_image_label = tk.Label(self.dmd_image_area, bg="white")
-        self.dmd_image_label.pack(fill="both", expand=True)
+        self.dmd_image_label = tk.Label(self.dmd_viewer_body, bg="white",
+                                         width=40, height=14)
+        self.dmd_image_label.pack()
         self._dmd_photo = None  # PhotoImage 레퍼런스 유지용 (안 하면 GC로 사라짐)
 
         self.dmd_info_var = tk.StringVar(value="No mask loaded")
-        self._pl(self.dmd_viewer_body, textvariable=self.dmd_info_var,
-                 style="PanelMuted.TLabel").pack(anchor="w", pady=(6, 0))
+        ttk.Label(self.dmd_viewer_body, textvariable=self.dmd_info_var,
+                  font=("Segoe UI", 9)).pack(anchor="w", pady=(5, 0))
 
-        nav_row = ttk.Frame(self.dmd_viewer_body, style="Panel.TFrame")
-        nav_row.pack(fill="x", pady=(6, 0))
+        nav_row = ttk.Frame(self.dmd_viewer_body)
+        nav_row.pack(fill="x", pady=(5, 0))
         ttk.Button(nav_row, text="Previous", command=lambda: self._preview_mask(-1)).pack(side="left")
-        ttk.Button(nav_row, text="Next",
-                   command=lambda: self._preview_mask(1)).pack(side="left", padx=(theme.GAP // 2, 0))
+        ttk.Button(nav_row, text="Next", command=lambda: self._preview_mask(1)).pack(side="left", padx=5)
 
         self.mask_results = []
         self.mask_preview_index = 0
         self._update_dmd_viewer_visibility()
-
-    def _on_image_area_resize(self, event):
-        """DMD 마스크 미리보기 칸의 높이를, 지금 폭 기준 16:9(실제 DMD
-        해상도 비율)로 다시 계산해서 맞춤 - 창 크기가 바뀌어도 비율이
-        유지됨."""
-        if event.width <= 1:
-            return
-        target_h = max(1, round(event.width * self.DMD_ASPECT_H / self.DMD_ASPECT_W))
-        if event.widget.cget("height") != target_h:
-            event.widget.configure(height=target_h)
 
     def _update_dmd_viewer_visibility(self):
         if self.mode_var.get() == COLUMN:
@@ -542,26 +505,47 @@ class SynthesisTab:
             self.dmd_image_label.configure(image="", text=f"(failed to load image: {e})")
         self.dmd_info_var.set(info_text)
 
+    def _build_progress_ring(self, parent):
+        """원형 진행률(%) 표시 + 그 아래 현재 단계/사이클 텍스트.
+        카드 그리드 방식은 너무 요란해 보여서, 작은 텍스트 한 줄로 단순화."""
+        frame = ttk.Frame(parent, padding=(10, 0, 0, 0))
+        frame.pack(expand=True)
+
+        ring_size, ring_width = 90, 10
+        pad = ring_width / 2 + 2
+        self.ring_canvas = tk.Canvas(frame, width=ring_size, height=ring_size,
+                                      bg=BG_COLOR, highlightthickness=0)
+        self.ring_canvas.pack()
+        bbox = (pad, pad, ring_size - pad, ring_size - pad)
+
+        # 배경 트랙(항상 전체 원)
+        self.ring_canvas.create_arc(
+            bbox, start=90, extent=359.9, style="arc",
+            outline="#d9d9d9", width=ring_width
+        )
+        # 진행률 아크 - extent만 매번 갱신
+        self.ring_arc_id = self.ring_canvas.create_arc(
+            bbox, start=90, extent=0, style="arc",
+            outline="#333333", width=ring_width
+        )
+        self.ring_text_id = self.ring_canvas.create_text(
+            ring_size / 2, ring_size / 2, text="0%", font=("Segoe UI", 13, "bold")
+        )
+
+        self.stage_var = tk.StringVar(value="Stage: Idle")
+        ttk.Label(frame, textvariable=self.stage_var, font=("Segoe UI", 9)).pack(pady=(4, 0))
+
+        self.cycle_template_len = 0
+        self.cycle_total_cycles = 1
+        self.cycle_stage_labels = []
+
     def _set_overall_progress(self, percent):
-        """원형 링 대신 수평 Progress Bar(self.progress_bar, Operation &
-        Progress 패널에 _build_operation_panel에서 생성됨)의 값과 퍼센트
-        텍스트를 갱신."""
-        self.progress_bar.configure(value=percent)
-        self.progress_percent_var.set(f"{int(percent)}%")
+        extent = -(percent / 100) * 359.9  # 시계방향(위에서 출발)으로 채워지도록 음수 extent
+        self.ring_canvas.itemconfigure(self.ring_arc_id, extent=extent)
+        self.ring_canvas.itemconfigure(self.ring_text_id, text=f"{int(percent)}%")
 
     def _set_stage(self, text):
         self.stage_var.set(text)
-        # Fluidic Path 패널 머리글의 작은 상태 점/텍스트도 같이 갱신
-        # ("Stage: Deblock   (Cycle 2/20)" 같은 상세 문구에서 앞부분
-        # 단어만 추려서 짧게 보여줌 - 목업의 "● Idle" 표시에 대응)
-        if hasattr(self, "flow_status_var"):
-            short = text.replace("Stage:", "").split("(")[0].strip() or "Idle"
-            self.flow_status_var.set(short)
-            is_idle = short.lower() == "idle"
-            self.flow_status_dot.itemconfigure(
-                self._flow_status_dot_id,
-                fill=theme.TEXT_MUTED if is_idle else theme.ACCENT,
-            )
 
     @staticmethod
     def _chamfer_corners(path, chamfer=14):
@@ -621,7 +605,7 @@ class SynthesisTab:
             d = abs(hy - sy)
             return [(sq_right_x, sy), (x_diag, sy), (x_diag + d, hy), (hx - hr, hy)]
 
-    def _build_fluidic_path(self, parent, row):
+    def _build_fluidic_path(self, parent):
         """12-port 로터리밸브를 실제 마이크로유체 칩의 유로 배치 규칙대로 그림
         (직선/45도만 사용, 직각 꺾임 금지, 원의 접선을 넘지 않음, 선끼리
         교차 없음, 자기 구멍 외에는 원/다른 구멍에 닿지 않음 - 이 6가지를
@@ -630,31 +614,9 @@ class SynthesisTab:
         포트 번호 순서(i=0..11)가 그대로 "리스트에서 몇 번째 칸"과
         "원 둘레에서 몇 번째 구멍"이 되도록 해서, 위쪽 6개는 원 위쪽
         반원(15도~165도)에, 아래쪽 6개는 아래쪽 반원(195도~345도)에
-        대칭으로 연결된다 (_channel_path).
-
-        화면 크기가 바뀌어도 종횡비를 유지하며 자동 스케일링하고(Flow
-        Cell/Waste를 포함해 아무 것도 잘리지 않도록) - 캔버스는 이 기준
-        좌표(BASE)로 한 번만 그리고, <Configure>가 올 때마다
-        canvas.scale("all", 0, 0, factor, factor)로 전체를 다시 축척함.
-        애니메이션(바늘/흐름 점)은 그릴 때마다 BASE 좌표에 현재 축척
-        (self._fluidic_scale)을 곱해서 위치를 계산하므로 리사이즈 중에도
-        어긋나지 않음 (_scale_pt 참고)."""
-        frame = theme.panel(parent, "Fluidic Path")
-        frame.grid(row=row, column=1, sticky="nsew")
-
-        header = ttk.Frame(frame, style="Panel.TFrame")
-        header.pack(fill="x", pady=(0, 6))
-        self.flow_status_var = tk.StringVar(value="Idle")
-        self.flow_status_dot = tk.Canvas(header, width=10, height=10, bg=theme.PANEL_BG,
-                                          highlightthickness=0)
-        self.flow_status_dot.pack(side="right", pady=2)
-        self._flow_status_dot_id = self.flow_status_dot.create_oval(1, 1, 9, 9, fill=theme.TEXT_MUTED,
-                                                                      outline="")
-        self._pl(header, textvariable=self.flow_status_var,
-                 style="PanelMuted.TLabel").pack(side="right", padx=(0, 6))
-
-        canvas_holder = ttk.Frame(frame, style="Panel.TFrame")
-        canvas_holder.pack(fill="both", expand=True)
+        대칭으로 연결된다 (_channel_path)."""
+        frame = ttk.LabelFrame(parent, text="Fluidic Path", padding=10)
+        frame.pack(side="left", fill="both", expand=True, padx=(5, 0))
 
         port_to_name = {port: name for name, port in cfg.VALVE_PORTS.items()}
         self.display_names = load_display_names()
@@ -681,23 +643,12 @@ class SynthesisTab:
         waste_x0 = fc_x1 + 50
         waste_x1 = waste_x0 + 90
 
-        base_w = waste_x1 + 20
-        base_h = max(square_center_y(n - 1) + sq_h / 2, cy + r + 95) + 20
-        self._fluidic_base_w = base_w
-        self._fluidic_base_h = base_h
-        self._fluidic_scale = 1.0
-        self._fluidic_text_items = []  # (item_id, family, base_size, weight) - 리사이즈 때 폰트도 같이 축척
+        canvas_w = waste_x1 + 20
+        canvas_h = max(square_center_y(n - 1) + sq_h / 2, cy + r + 95) + 20
 
-        self.fluidic_canvas = tk.Canvas(canvas_holder, bg="white", highlightthickness=0)
-        self.fluidic_canvas.pack(fill="both", expand=True)
-        canvas_holder.bind("<Configure>", self._on_fluidic_resize)
-
-        def text(x, y, s, size, weight="normal", **kw):
-            item_id = self.fluidic_canvas.create_text(
-                x, y, text=s, font=(theme.FONT_FAMILY, size, weight), **kw)
-            self._fluidic_text_items.append((item_id, theme.FONT_FAMILY, size, weight))
-            return item_id
-
+        self.fluidic_canvas = tk.Canvas(frame, width=canvas_w, height=canvas_h,
+                                         bg="white", highlightthickness=0)
+        self.fluidic_canvas.pack()
         self._rv_center = (cx, cy)
 
         self.port_points = {k + 1: self._hole_point(cx, cy, r, k) for k in range(n)}
@@ -737,12 +688,12 @@ class SynthesisTab:
             fill="white", outline="#1a1a1a", width=1.5
         )
         self.rv_needle = self.fluidic_canvas.create_line(cx, cy, cx, cy, fill="#1a1a1a", width=3)
-        text(cx, cy + r + 26, "12 PORT", theme.FONT_SIZE_SMALL, "bold")
+        self.fluidic_canvas.create_text(cx, cy + r + 26, text="12 PORT", font=("Segoe UI", 9, "bold"))
 
         # 사각형(입구 패드) - 선 끝이 테두리에 깔끔하게 덮이도록 맨 마지막에 그림
         self.pump_nodes = {}      # name -> fill_id
         self.pump_lines = {}      # name -> 연결선 캔버스 id (디버깅/참조용)
-        self.pump_paths = {}      # name -> 흐름 애니메이션용 경로 좌표 리스트 (BASE 좌표)
+        self.pump_paths = {}      # name -> 흐름 애니메이션용 경로 좌표 리스트
         for i in range(n):
             port_number = i + 1
             name = port_to_name.get(port_number)
@@ -756,16 +707,20 @@ class SynthesisTab:
                     sq_left_x + 3, y0 + 3, sq_right_x - 3, y1 - 3,
                     fill=VALVE_IDLE_COLOR, outline=""
                 )
-                text((sq_left_x + sq_right_x) / 2, sy, self.display_names.get(name, name),
-                     theme.FONT_SIZE_SMALL, "bold")
+                self.fluidic_canvas.create_text(
+                    (sq_left_x + sq_right_x) / 2, sy,
+                    text=self.display_names.get(name, name), font=("Segoe UI", 9, "bold")
+                )
                 self.pump_nodes[name] = fill_id
                 self.pump_lines[name] = line_ids[name]
                 self.pump_paths[name] = line_paths[name]
             else:
                 self.fluidic_canvas.create_rectangle(sq_left_x, y0, sq_right_x, y1,
                                                       outline="#bfbfbf", width=2, dash=(3, 2))
-                text((sq_left_x + sq_right_x) / 2, sy, "Empty", theme.FONT_SIZE_SMALL,
-                     fill="#9aa5b1")
+                self.fluidic_canvas.create_text(
+                    (sq_left_x + sq_right_x) / 2, sy,
+                    text="Empty", font=("Segoe UI", 9), fill="#9aa5b1"
+                )
 
         fc_y0, fc_y1 = cy - 35, cy + 35
         self.common_flow_path = [outlet_point, (fc_x0, cy)]
@@ -774,7 +729,8 @@ class SynthesisTab:
         )
         self.fluidic_canvas.create_rectangle(fc_x0, fc_y0, fc_x1, fc_y1,
                                               outline="#1a1a1a", width=2)
-        text((fc_x0 + fc_x1) / 2, cy, "FLOW\nCELL", theme.FONT_SIZE_HEADING, "bold")
+        self.fluidic_canvas.create_text((fc_x0 + fc_x1) / 2, cy,
+                                         text="FLOW\nCELL", font=("Segoe UI", 11, "bold"))
 
         waste_y0, waste_y1 = cy + 50, cy + 95
         fc_to_waste_path = self._chamfer_corners(
@@ -785,43 +741,13 @@ class SynthesisTab:
         )
         self.fluidic_canvas.create_rectangle(waste_x0, waste_y0, waste_x1, waste_y1,
                                               outline="#1a1a1a", width=2)
-        text((waste_x0 + waste_x1) / 2, (waste_y0 + waste_y1) / 2, "WASTE", theme.FONT_SIZE_SMALL)
+        self.fluidic_canvas.create_text((waste_x0 + waste_x1) / 2, (waste_y0 + waste_y1) / 2,
+                                         text="WASTE", font=("Segoe UI", 9))
 
         self.flow_dots = []
-        self.flow_dot_base_paths = []
         self.flow_animating = False
-        self.reagent_label = self._pl(frame, "Commanded Reagent: none", style="PanelMuted.TLabel")
-        self.reagent_label.pack(anchor="w", pady=(6, 0))
-
-    def _scale_pt(self, pt):
-        """BASE(리사이즈 전) 좌표 하나를 현재 축척(self._fluidic_scale)으로
-        변환. 애니메이션(바늘/흐름 점)은 매번 이 함수를 거쳐서 위치를
-        계산하므로, 리사이즈 중에도 다이어그램과 어긋나지 않음."""
-        s = self._fluidic_scale
-        return pt[0] * s, pt[1] * s
-
-    def _on_fluidic_resize(self, event):
-        """컨테이너 크기가 바뀔 때마다, 기준(BASE) 치수 대비 가로/세로 중
-        더 작게 맞는 축척으로 전체를 다시 그림 - 종횡비는 항상 유지되고
-        (min을 쓰므로) Flow Cell/Waste를 포함해 어떤 구성요소도 잘리지
-        않음. 너무 작아지면 알아보기 힘들어서 0.4배 밑으로는 안 줄임."""
-        if event.width <= 1 or event.height <= 1:
-            return
-        target_scale = min(event.width / self._fluidic_base_w,
-                            event.height / self._fluidic_base_h)
-        target_scale = max(0.4, target_scale)
-        if abs(target_scale - self._fluidic_scale) < 0.005:
-            return
-        factor = target_scale / self._fluidic_scale
-        self.fluidic_canvas.scale("all", 0, 0, factor, factor)
-        self._fluidic_scale = target_scale
-        # 선/도형은 scale()로 좌표가 같이 늘어나지만, 글자 크기는 좌표
-        # 변환과 별개라서(캔버스 text 아이템은 scale에 폰트가 안 따라옴)
-        # 직접 다시 설정해줘야 다이어그램과 비례가 맞음
-        for item_id, family, base_size, weight in self._fluidic_text_items:
-            new_size = max(6, round(base_size * target_scale))
-            self.fluidic_canvas.itemconfigure(item_id, font=(family, new_size, weight))
-        self.fluidic_canvas.configure(scrollregion=self.fluidic_canvas.bbox("all"))
+        self.reagent_label = ttk.Label(frame, text="Commanded Reagent: none")
+        self.reagent_label.pack(anchor="w", pady=(5, 0))
 
     @staticmethod
     def _point_on_path(path, t):
@@ -857,26 +783,21 @@ class SynthesisTab:
         )
 
         # 바늘(needle)을 현재 선택된 포트 쪽으로 회전 - 멈춘 뒤에도 그대로 유지되어
-        # 실제 밸브처럼 "마지막으로 돌아간 위치"를 계속 보여줌. 좌표는
-        # BASE 기준으로 저장돼 있으므로 현재 축척(_scale_pt)을 적용해야
-        # 리사이즈된 다이어그램과 어긋나지 않음.
+        # 실제 밸브처럼 "마지막으로 돌아간 위치"를 계속 보여줌
         port_point = self.port_points.get(port)
         if port_point:
-            cx, cy = self._scale_pt(self._rv_center)
-            px, py = self._scale_pt(port_point)
-            self.fluidic_canvas.coords(self.rv_needle, cx, cy, px, py)
+            px, py = port_point
+            self.fluidic_canvas.coords(self.rv_needle, *self._rv_center, px, py)
             self.fluidic_canvas.tag_raise(self.rv_needle)
 
-        # BASE 좌표 그대로 저장 - 실제 화면 좌표 변환은 매 프레임
-        # _animate_flow에서 _scale_pt로 함 (리사이즈 중에도 안 어긋남)
-        self.flow_dot_base_paths = []
+        self.flow_dot_paths = []
         pump_path = self.pump_paths.get(function_name)
         if pump_path:
-            self.flow_dot_base_paths.append(pump_path)
-        self.flow_dot_base_paths.append(self.common_flow_path)
+            self.flow_dot_paths.append(pump_path)
+        self.flow_dot_paths.append(self.common_flow_path)
 
-        for base_path in self.flow_dot_base_paths:
-            x, y = self._scale_pt(base_path[0])
+        for path in self.flow_dot_paths:
+            x, y = path[0]
             self.flow_dots.append(
                 self.fluidic_canvas.create_oval(x - 4, y - 4, x + 4, y + 4,
                                                  fill="#333333", outline="")
@@ -888,9 +809,8 @@ class SynthesisTab:
     def _animate_flow(self, t):
         if not self.flow_animating:
             return
-        for dot_id, base_path in zip(self.flow_dots, self.flow_dot_base_paths):
-            scaled_path = [self._scale_pt(p) for p in base_path]
-            x, y = self._point_on_path(scaled_path, t)
+        for dot_id, path in zip(self.flow_dots, self.flow_dot_paths):
+            x, y = self._point_on_path(path, t)
             self.fluidic_canvas.coords(dot_id, x - 4, y - 4, x + 4, y + 4)
         next_t = t + 0.04
         if next_t > 1.0:
@@ -902,35 +822,36 @@ class SynthesisTab:
         for dot_id in self.flow_dots:
             self.fluidic_canvas.delete(dot_id)
         self.flow_dots = []
-        self.flow_dot_base_paths = []
+        self.flow_dot_paths = []
         for fill_id in self.pump_nodes.values():
             self.fluidic_canvas.itemconfigure(fill_id, fill=VALVE_IDLE_COLOR)
 
     def _file_row(self, parent, label, var, is_dir):
-        row = ttk.Frame(parent, style="Panel.TFrame")
-        row.pack(fill="x", pady=4)
-        self._pl(row, label, width=14).pack(side="left")
-        ttk.Entry(row, textvariable=var).pack(side="left", fill="x", expand=True, padx=(0, 6))
+        row = ttk.Frame(parent)
+        row.pack(fill="x", pady=2)
+        ttk.Label(row, text=label, width=18).pack(side="left")
+        # 상단 toolbar 한 줄에 다른 요소들과 같이 들어가야 해서, Entry 기본
+        # 폭(tkinter 기본값, 꽤 넓음)에 맡기지 않고 명시적으로 좁게 고정
+        ttk.Entry(row, textvariable=var, width=16).pack(side="left", fill="x", expand=True)
         cmd = (lambda: var.set(filedialog.askdirectory() or var.get())) if is_dir else \
               (lambda: var.set(filedialog.askopenfilename() or var.get()))
         ttk.Button(row, text="Browse", command=cmd).pack(side="left")
 
     def _num_entry(self, parent, label, var, row, col):
-        self._pl(parent, label).grid(row=row, column=col, sticky="w", padx=(0, 5), pady=3)
-        ttk.Entry(parent, textvariable=var, width=10).grid(row=row, column=col + 1, sticky="w", padx=(0, 15), pady=3)
+        ttk.Label(parent, text=label).grid(row=row, column=col, sticky="w", padx=(0, 5))
+        ttk.Entry(parent, textvariable=var, width=10).grid(row=row, column=col + 1, sticky="w", padx=(0, 15))
 
     def _on_mode_change(self):
         if self.mode_var.get() == COLUMN:
             self.dmd_frame.pack_forget()
-            self.dmd_params_frame.grid_remove()
-            self.column_frame.pack(fill="x")
+            self.dmd_params_frame.pack_forget()
+            self.column_frame.pack(fill="x", pady=2)
             self.dmd_connect_button.configure(state="disabled")
             self.dmd_status_label.configure(text="DMD: N/A (Column mode)")
         else:
             self.column_frame.pack_forget()
-            self.dmd_frame.pack(fill="x")
-            self.dmd_params_frame.grid(row=self._dmd_params_grid_row, column=0, columnspan=2,
-                                        sticky="ew", pady=(0, theme.GAP))
+            self.dmd_frame.pack(fill="x", pady=2)
+            self.dmd_params_frame.pack(fill="x", padx=10, pady=(0, 10))
             self.dmd_connect_button.configure(state="normal")
             self.dmd_status_label.configure(
                 text="DMD: Connected" if self.dmd is not None else "DMD: No DMD"
