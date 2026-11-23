@@ -20,7 +20,7 @@ from column_parser import build_column_sequence, read_sequence, load_monomer_pro
 from dmd_mask_builder import build_all_masks_from_list
 from dmd_array_sequence import build_dmd_array_steps
 from synthesis_mode import build_context, COLUMN, DMD_ARRAY
-from mock_devices import MockDMD, MockUVSource
+import dmd_uv_state
 from prime_dialog import PrimeDialog
 from experiment_log import ExperimentLog
 from steps import FluidStep, DmdExposeStep
@@ -232,11 +232,11 @@ class SynthesisTab:
         self.estimated_total_s = 0.0
         self.completed_duration_s = 0.0
 
-        # DMD/UV 연결은 Synthesis Mode 선택과 별개의 토글 - Column 모드는
-        # DMD 연결 없이도("No DMD") 진행 가능하고, DMD Array 모드만 연결을
-        # 필수로 요구함
-        self.dmd = None
-        self.uv = None
+        # DMD/UV 연결 상태는 dmd_uv_state 모듈에서 Manual Control 탭과
+        # 공유함(어느 탭에서 연결/해제하든 양쪽에 똑같이 반영되게 하기
+        # 위함). Column 모드는 DMD 연결 없이도("No DMD") 진행 가능하고,
+        # DMD Array 모드만 연결을 필수로 요구함.
+        dmd_uv_state.subscribe(self._refresh_dmd_status)
 
         self._build_widgets()
         self._poll_log_queue()
@@ -1019,29 +1019,31 @@ class SynthesisTab:
             self.dmd_params_frame.pack_forget()
             self.column_frame.pack(fill="x", pady=2)
             self.dmd_connect_button.configure(state="disabled")
-            self.dmd_status_label.configure(text="DMD: N/A (Column mode)")
         else:
             self.column_frame.pack_forget()
             self.dmd_frame.pack(fill="x", pady=2)
             self.dmd_params_frame.pack(fill="x", padx=10, pady=(0, 10))
             self.dmd_connect_button.configure(state="normal")
-            self.dmd_status_label.configure(
-                text="DMD: Connected" if self.dmd is not None else "DMD: No DMD"
-            )
+        self._refresh_dmd_status()
         if hasattr(self, "dmd_viewer_body"):
             self._update_dmd_viewer_visibility()
+
+    def _refresh_dmd_status(self):
+        """DMD/UV 연결 상태 표시 갱신 - dmd_uv_state가 바뀔 때마다(이 탭에서
+        토글했든, Manual Control 탭에서 토글했든) 호출됨."""
+        connected = dmd_uv_state.is_connected()
+        if self.mode_var.get() == COLUMN:
+            self.dmd_status_label.configure(text="DMD: N/A (Column mode)")
+        else:
+            self.dmd_status_label.configure(text="DMD: Connected" if connected else "DMD: No DMD")
+        self.dmd_connect_button.configure(text="Disconnect DMD" if connected else "Connect DMD")
 
     def _on_simulate_change(self):
         self.set_mode("SIMULATION" if self.simulate_var.get() else "REAL HARDWARE")
 
     def _on_toggle_dmd(self):
-        if self.dmd is not None:
-            self.dmd.close()
-            self.uv.close()
-            self.dmd = None
-            self.uv = None
-            self.dmd_status_label.configure(text="DMD: No DMD")
-            self.dmd_connect_button.configure(text="Connect DMD")
+        if dmd_uv_state.is_connected():
+            dmd_uv_state.disconnect()
             return
 
         if not self.simulate_var.get():
@@ -1050,10 +1052,7 @@ class SynthesisTab:
             self._log("[DMD] Real DMD/UV driver is not wired up yet - only Simulation Mode is supported.")
             return
 
-        self.dmd = MockDMD()
-        self.uv = MockUVSource()
-        self.dmd_status_label.configure(text="DMD: Connected")
-        self.dmd_connect_button.configure(text="Disconnect DMD")
+        dmd_uv_state.connect_mock()
 
     # ---------------- logging ----------------
     def _log(self, msg):
@@ -1072,7 +1071,7 @@ class SynthesisTab:
     # ---------------- execution ----------------
     def _on_start(self):
         inp = self._read_inputs()
-        if inp["mode"] == DMD_ARRAY and self.dmd is None:
+        if inp["mode"] == DMD_ARRAY and not dmd_uv_state.is_connected():
             self._log("[Input Error] DMD Array mode requires DMD to be connected first "
                       "(Connect DMD button).")
             return
@@ -1251,8 +1250,8 @@ class SynthesisTab:
             # DMD/UV는 Synthesis Mode와 별개로 연결된 상태를 그대로 씀 (Column
             # 모드에서는 보통 None이라 "No DMD"로 진행되고, DMD Array 모드는
             # _on_start에서 이미 연결 여부를 확인했으므로 여기서는 항상 있음)
-            ctx.dmd = self.dmd
-            ctx.uv = self.uv
+            ctx.dmd = dmd_uv_state.dmd
+            ctx.uv = dmd_uv_state.uv
             for i, step in enumerate(steps, 1):
                 if self.stop_event.is_set():
                     status = "stopped"

@@ -16,6 +16,7 @@ import tkinter as tk
 from tkinter import ttk
 
 import devices_config as cfg
+import dmd_uv_state
 from synthesis_mode import build_context, DMD_ARRAY
 from display_names import load_display_names, save_display_names
 
@@ -33,6 +34,12 @@ class ManualControlTab:
         self.connecting = False
 
         self._build_widgets()
+        # DMD/UV는 Synthesis 탭의 "Connect DMD" 버튼으로만 연결하지만(여기엔
+        # 별도 Connect 버튼을 안 둠 - 중복 연결 경로로 상태가 어긋나는 걸
+        # 막기 위함), 지금 연결됐는지는 여기서도 바로 볼 수 있어야 유용해서
+        # 상태만 구독해서 같이 보여줌
+        dmd_uv_state.subscribe(self._refresh_dmd_status)
+        self._refresh_dmd_status()
 
     # ---------------- layout ----------------
     def _build_widgets(self):
@@ -52,11 +59,29 @@ class ManualControlTab:
         self.conn_status_label = ttk.Label(conn_frame, text="Not connected")
         self.conn_status_label.pack(side="left", padx=20)
 
+        # DMD/UV 연결은 Synthesis 탭의 "Connect DMD" 버튼에서만 하지만(한
+        # 곳에서만 연결하도록 해서 두 탭 상태가 어긋나지 않게 함), 지금
+        # 연결돼 있는지는 Manual Control에서 장비를 만질 때도 바로 보여야
+        # 해서 읽기 전용으로 같이 표시함
+        self.dmd_uv_status_label = ttk.Label(conn_frame, text="")
+        self.dmd_uv_status_label.pack(side="left", padx=(0, 10))
+
         body = ttk.Frame(self.parent, padding=10)
         body.pack(fill="both", expand=True)
 
         self._build_valve_section(body)
         self._build_pump_section(body)
+        self._build_display_name_section(body)
+
+    def _refresh_dmd_status(self):
+        """dmd_uv_state가 바뀔 때마다(Synthesis 탭에서 Connect/Disconnect
+        DMD를 누르면) 호출되어 여기 표시만 갱신함 - 연결 자체는 여기서
+        하지 않음."""
+        connected = dmd_uv_state.is_connected()
+        self.dmd_uv_status_label.configure(
+            text=f"DMD/UV: {'Connected' if connected else 'Not connected'} "
+                 f"(connect from the Synthesis tab)"
+        )
 
     def _build_valve_section(self, parent):
         frame = ttk.LabelFrame(parent, text="12-Port Switching Valve", padding=10)
@@ -80,19 +105,16 @@ class ManualControlTab:
         self.valve_status_label.pack(anchor="w", pady=(8, 0))
 
     def _build_pump_section(self, parent):
+        # "Individual Syringe Pump" 박스에는 펌프 선택 + 분주 기능만 둠
+        # (Display Name 수정은 별도 박스로 분리 - _build_display_name_section).
         frame = ttk.LabelFrame(parent, text="Individual Syringe Pump", padding=10)
-        frame.pack(fill="x")
-
-        self.display_names = load_display_names()
+        frame.pack(fill="x", pady=(0, 10))
 
         # 예전엔 줄마다 따로 ttk.Frame + pack(side="left")을 썼는데, 라벨
-        # 폭을 줄마다 다르게(width=24 또는 지정 안 함) 줘서 행마다 입력칸이
-        # 시작하는 x 위치가 제각각이었음("Pump:"/"Display Name:"은
-        # width=24라 맞았지만 "Dispense Volume (uL):"는 그보다 길어서
-        # 더 오른쪽에서 시작 - 그래서 중구난방으로 보였던 것).
-        # 전부 하나의 grid로 묶어서 0번 열(라벨)의 폭을 grid가 자동으로
-        # 제일 긴 라벨 기준으로 맞추게 하면, 입력칸 시작 위치가 모든 줄에서
-        # 정확히 일치함.
+        # 폭을 줄마다 다르게 줘서 행마다 입력칸이 시작하는 x 위치가
+        # 제각각이었음. 전부 하나의 grid로 묶어서 0번 열(라벨)의 폭을
+        # grid가 자동으로 제일 긴 라벨 기준으로 맞추게 하면, 입력칸 시작
+        # 위치가 모든 줄에서 정확히 일치함.
         grid = ttk.Frame(frame)
         grid.pack(fill="x")
 
@@ -106,32 +128,22 @@ class ManualControlTab:
         self.pump_info_label = ttk.Label(pump_row, text="")
         self.pump_info_label.pack(side="left", padx=15)
 
-        # 화면에 보여줄 이름(Synthesis 탭 Fluidic Path 등에 쓰이는 이름)을
-        # 여기서 바꾸고 Save를 눌러야 파일(display_names.json)에 저장됨.
-        # 저장된 이름은 다음 실행부터 Synthesis 탭에 반영됨.
-        ttk.Label(grid, text="Display Name:").grid(row=1, column=0, sticky="w", pady=4)
-        name_row = ttk.Frame(grid)
-        name_row.grid(row=1, column=1, sticky="w", pady=4)
-        self.display_name_var = tk.StringVar()
-        ttk.Entry(name_row, textvariable=self.display_name_var, width=20).pack(side="left")
-        ttk.Button(name_row, text="Save", command=self._on_save_display_name).pack(side="left", padx=5)
-        self.rename_status_label = ttk.Label(name_row, text="")
-        self.rename_status_label.pack(side="left", padx=10)
-
-        self._on_pump_select(self.pump_var.get())
-
-        ttk.Label(grid, text="Dispense Volume (uL):").grid(row=2, column=0, sticky="w", pady=4)
+        # 분주량(uL)과 실제로 걸리는 시간(s)을 직접 입력 - 예전엔 "Flow
+        # Rate (uL/s)"로 받아서 시간을 역산했는데, 실제 펌프 제어
+        # (FluidStep, PrimeDialog)는 전부 "양 + 시간"을 그대로 쓰므로
+        # 여기서도 똑같이 양 + 시간을 직접 받는 게 더 직관적이고 일관됨.
+        ttk.Label(grid, text="Dispense Volume (uL):").grid(row=1, column=0, sticky="w", pady=4)
         params = ttk.Frame(grid)
-        params.grid(row=2, column=1, sticky="w", pady=4)
+        params.grid(row=1, column=1, sticky="w", pady=4)
         self.volume_var = tk.DoubleVar(value=100.0)
-        self.rate_var = tk.DoubleVar(value=50.0)
+        self.time_var = tk.DoubleVar(value=2.0)
         ttk.Entry(params, textvariable=self.volume_var, width=10).pack(side="left")
-        ttk.Label(params, text="Flow Rate (uL/s):").pack(side="left", padx=(20, 5))
-        ttk.Entry(params, textvariable=self.rate_var, width=10).pack(side="left")
+        ttk.Label(params, text="Time (s):").pack(side="left", padx=(20, 5))
+        ttk.Entry(params, textvariable=self.time_var, width=10).pack(side="left")
 
-        ttk.Label(grid, text="").grid(row=3, column=0, sticky="w", pady=4)
+        ttk.Label(grid, text="").grid(row=2, column=0, sticky="w", pady=4)
         btn_row = ttk.Frame(grid)
-        btn_row.grid(row=3, column=1, sticky="w", pady=4)
+        btn_row.grid(row=2, column=1, sticky="w", pady=4)
         self.dispense_button = ttk.Button(btn_row, text="Dispense", command=self._on_dispense,
                                            state="disabled")
         self.dispense_button.pack(side="left")
@@ -142,6 +154,29 @@ class ManualControlTab:
 
         self.pump_status_label = ttk.Label(frame, text="")
         self.pump_status_label.pack(anchor="w", pady=(5, 0))
+
+    def _build_display_name_section(self, parent):
+        """선택된 펌프의 화면 표시 이름만 다루는 별도 박스 - 분주 기능과
+        섞이지 않게 분리함. 위 "Individual Syringe Pump" 박스의
+        self.pump_var를 그대로 공유해서, 거기서 고른 펌프의 이름을 여기서
+        바꿈(펌프 선택 UI를 두 번 만들지 않음)."""
+        frame = ttk.LabelFrame(parent, text="Pump Display Name", padding=10)
+        frame.pack(fill="x")
+
+        self.display_names = load_display_names()
+
+        row = ttk.Frame(frame)
+        row.pack(fill="x")
+        ttk.Label(row, text="Editing name for:").pack(side="left")
+        ttk.Label(row, textvariable=self.pump_var, font=("Segoe UI", 9, "bold")
+                  ).pack(side="left", padx=(5, 20))
+        self.display_name_var = tk.StringVar()
+        ttk.Entry(row, textvariable=self.display_name_var, width=20).pack(side="left")
+        ttk.Button(row, text="Save", command=self._on_save_display_name).pack(side="left", padx=5)
+        self.rename_status_label = ttk.Label(row, text="")
+        self.rename_status_label.pack(side="left", padx=10)
+
+        self._on_pump_select(self.pump_var.get())
 
     def _on_pump_select(self, name):
         spec = cfg.PUMPS[name]
@@ -257,11 +292,10 @@ class ManualControlTab:
             return
 
         volume = self.volume_var.get()
-        rate = self.rate_var.get()
-        if rate <= 0:
-            self.pump_status_label.configure(text="Flow rate must be greater than 0.")
+        time_s = self.time_var.get()
+        if volume <= 0 or time_s <= 0:
+            self.pump_status_label.configure(text="Volume and Time must both be greater than 0.")
             return
-        time_s = volume / rate
 
         self.pump_status_label.configure(text=f"Dispensing {volume}uL over {time_s:.1f}s...")
         threading.Thread(target=self._dispense_worker, args=(pump, volume, time_s), daemon=True).start()
