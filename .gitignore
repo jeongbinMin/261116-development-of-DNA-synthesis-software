@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 logs/
+# 컴퓨터마다 다른 COM 포트 설정 - 깃에 올라가서 다른 컴퓨터 설정을
+# 덮어쓰면 안 되므로 로컬에만 둠
+device_overrides.json

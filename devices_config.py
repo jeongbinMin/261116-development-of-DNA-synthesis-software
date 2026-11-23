@@ -28,3 +28,17 @@ VALVE_PORTS = {
 
 VALVE_COM = "COM6"
 VALVE_ADDRESS = 1  # 밸브 장치 주소 (기본값)
+
+# 위 값들은 코드에 적힌 "기본값"이고, 실제 COM 포트는 컴퓨터마다 다를 수
+# 있음. Environment 탭에서 저장한 값(device_overrides.json)이 있으면
+# 여기서 그 값으로 덮어써서, 코드를 직접 고치지 않고도 다른 컴퓨터에서
+# 바로 맞는 COM 포트를 쓸 수 있게 함.
+from device_overrides import load_overrides as _load_overrides
+
+_overrides = _load_overrides()
+for _name, _spec in _overrides.get("pumps", {}).items():
+    if _name in PUMPS and "com" in _spec:
+        PUMPS[_name]["com"] = _spec["com"]
+if "valve" in _overrides:
+    VALVE_COM = _overrides["valve"].get("com", VALVE_COM)
+    VALVE_ADDRESS = _overrides["valve"].get("address", VALVE_ADDRESS)
