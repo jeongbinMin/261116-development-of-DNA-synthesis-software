@@ -13,7 +13,7 @@ reason (no verified instant-stop guarantee from the real hardware yet).
 
 import threading
 import tkinter as tk
-from tkinter import ttk
+from tkinter import filedialog, ttk
 
 import devices_config as cfg
 import dmd_uv_state
@@ -79,18 +79,23 @@ class ManualControlTab:
         self._build_pump_section(pump_row)
         self._build_display_name_section(pump_row)
 
+        self._build_dmd_section(body)
         self._build_uv_section(body)
 
     def _refresh_dmd_status(self):
         """dmd_uv_state가 바뀔 때마다(이 탭의 Connect에서 바뀌었든,
-        Synthesis 탭에서 바뀌었든) 호출되어 여기 표시와 UV 조작 버튼들의
-        활성/비활성 상태를 갱신함."""
+        Synthesis 탭에서 바뀌었든) 호출되어 여기 표시와 DMD/UV 조작
+        버튼들의 활성/비활성 상태를 갱신함."""
         dmd_ok = dmd_uv_state.is_dmd_connected()
         uv_ok = dmd_uv_state.is_uv_connected()
         self.dmd_uv_status_label.configure(
             text=f"DMD: {'Connected' if dmd_ok else 'Not connected'}  |  "
                  f"UV: {'Connected' if uv_ok else 'Not connected'}"
         )
+        if hasattr(self, "dmd_display_button"):
+            dmd_state = "normal" if dmd_ok else "disabled"
+            for btn in (self.dmd_display_button, self.dmd_clear_button):
+                btn.configure(state=dmd_state)
         if hasattr(self, "uv_set_button"):
             uv_state = "normal" if uv_ok else "disabled"
             for btn in (self.uv_set_button, self.uv_on_button, self.uv_off_button,
@@ -169,6 +174,82 @@ class ManualControlTab:
 
         self.pump_status_label = ttk.Label(frame, text="")
         self.pump_status_label.pack(anchor="w", pady=(5, 0))
+
+    def _build_dmd_section(self, parent):
+        """DMD(TI DLP Discovery 4100) 직접 조작 - BMP 한 장 띄우기, 전부
+        끄기(Clear). UV와 마찬가지로 별도 Connect 없이 공용 연결 상태
+        (dmd_uv_state)를 그대로 쓰고, 연결 안 됐으면 버튼이 비활성 상태로
+        있음(_refresh_dmd_status가 관리)."""
+        frame = ttk.LabelFrame(parent, text="DMD (TI DLP Discovery 4100)", padding=10)
+        frame.pack(fill="x", pady=(0, 10))
+
+        grid = ttk.Frame(frame)
+        grid.pack(fill="x")
+
+        ttk.Label(grid, text="BMP File:").grid(row=0, column=0, sticky="w", pady=4)
+        row = ttk.Frame(grid)
+        row.grid(row=0, column=1, sticky="w", pady=4)
+        self.dmd_bmp_path_var = tk.StringVar()
+        ttk.Entry(row, textvariable=self.dmd_bmp_path_var, width=40).pack(side="left")
+        ttk.Button(row, text="Browse", command=self._on_dmd_browse).pack(side="left", padx=5)
+
+        ttk.Label(grid, text="").grid(row=1, column=0, sticky="w", pady=4)
+        btn_row = ttk.Frame(grid)
+        btn_row.grid(row=1, column=1, sticky="w", pady=4)
+        self.dmd_display_button = ttk.Button(btn_row, text="Display Image",
+                                              command=self._on_dmd_display, state="disabled")
+        self.dmd_display_button.pack(side="left")
+        self.dmd_clear_button = ttk.Button(btn_row, text="Clear", command=self._on_dmd_clear,
+                                            state="disabled")
+        self.dmd_clear_button.pack(side="left", padx=5)
+
+        self.dmd_action_status_label = ttk.Label(frame, text="")
+        self.dmd_action_status_label.pack(anchor="w", pady=(5, 0))
+
+    def _on_dmd_browse(self):
+        path = filedialog.askopenfilename(filetypes=[("Bitmap", "*.bmp"), ("All files", "*.*")])
+        if path:
+            self.dmd_bmp_path_var.set(path)
+
+    def _on_dmd_display(self):
+        dmd = dmd_uv_state.dmd
+        if dmd is None:
+            return
+        path = self.dmd_bmp_path_var.get().strip()
+        if not path:
+            self.dmd_action_status_label.configure(text="Please select a BMP file first.")
+            return
+        self.dmd_action_status_label.configure(text=f"Displaying {path} ...")
+        # 실제 DMD는 서브프로세스(32비트 Python)를 새로 띄워서 처리하므로
+        # 몇 초 걸릴 수 있음 - UI가 멈추지 않도록 스레드에서 실행
+        threading.Thread(target=self._dmd_display_worker, args=(dmd, path), daemon=True).start()
+
+    def _dmd_display_worker(self, dmd, path):
+        try:
+            dmd.display_image(path)
+            self.root.after(0, lambda: self.dmd_action_status_label.configure(text=f"Displayed: {path}"))
+        except Exception as e:
+            # except 블록이 끝나면 파이썬이 e를 자동으로 지워버리므로(암묵적
+            # del e), root.after로 나중에 실행되는 람다가 e를 그대로
+            # 참조하면 그 시점엔 이미 없는 변수라 에러가 남 - 메시지를
+            # 문자열로 먼저 뽑아서 그 문자열만 클로저로 넘김
+            msg = str(e)
+            self.root.after(0, lambda: self.dmd_action_status_label.configure(text=f"Display failed: {msg}"))
+
+    def _on_dmd_clear(self):
+        dmd = dmd_uv_state.dmd
+        if dmd is None:
+            return
+        self.dmd_action_status_label.configure(text="Clearing...")
+        threading.Thread(target=self._dmd_clear_worker, args=(dmd,), daemon=True).start()
+
+    def _dmd_clear_worker(self, dmd):
+        try:
+            dmd.clear()
+            self.root.after(0, lambda: self.dmd_action_status_label.configure(text="Cleared."))
+        except Exception as e:
+            msg = str(e)
+            self.root.after(0, lambda: self.dmd_action_status_label.configure(text=f"Clear failed: {msg}"))
 
     def _build_uv_section(self, parent):
         """UV LED 드라이버(Thorlabs DC40) 직접 조작 - 전류 설정, ON/OFF,
