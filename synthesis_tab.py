@@ -1054,9 +1054,9 @@ class SynthesisTab:
             dmd_uv_state.disconnect()
             return
 
-        # Simulation Mode면 둘 다 Mock으로, 꺼져 있으면 UV는 실제로 연결을
-        # 시도하고 DMD는 아직 실제 드라이버가 없어 솔직하게 미지원으로 남음
-        # (dmd_uv_state.connect 참고 - Manual Control의 Connect와 같은 경로)
+        # Simulation Mode면 둘 다 Mock으로, 꺼져 있으면 DMD/UV 둘 다 실제
+        # 드라이버로 연결을 시도함 (dmd_uv_state.connect 참고 - Manual
+        # Control의 Connect와 같은 경로)
         _, _, messages = dmd_uv_state.connect(self.simulate_var.get())
         for msg in messages:
             self._log(f"[DMD/UV] {msg}")

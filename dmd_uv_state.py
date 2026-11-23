@@ -8,10 +8,10 @@ DMD를 연결해도 Manual Control 탭은 "연결 안 됨"으로 보이는 등 �
 리스너를 전부 불러서, 지금 열려 있는 모든 탭의 화면이 즉시 같이
 갱신되게 한다.
 
-실제 DMD 드라이버는 이 프로젝트에 아직 전혀 없음(Mock만 있음) - 그래서
-실기(use_mock=False) 연결 시 DMD는 항상 "미지원"으로 솔직하게 남는다.
-실제 UV(Thorlabs DC40, uv_source.py)는 드라이버가 있고 예전에 연결
-확인된 적이 있어서, 실기 연결 시 실제로 연결을 시도한다.
+실제 DMD(TI DLP Discovery 4100, dmd_source.py)와 실제 UV(Thorlabs DC40,
+uv_source.py) 둘 다 드라이버가 있고 예전에 연결 확인된 적이 있어서,
+실기 연결 시 둘 다 실제로 연결을 시도한다. 하나가 실패해도 다른 하나는
+계속 시도함(둘이 독립된 USB 장치라 서로 영향 없음).
 
 스레드 주의: 리스너(subscribe로 등록된 콜백)는 보통 tkinter 위젯을
 건드리므로 반드시 메인 스레드에서만 호출돼야 한다. Manual Control 탭은
@@ -73,11 +73,18 @@ def connect(use_mock: bool, notify_listeners: bool = True):
             notify()
         return True, True, messages
 
-    # 실기 - DMD는 실제 드라이버가 아직 없어서 있는 척하지 않고 항상 실패로 둠
-    dmd = None
-    messages.append("DMD: no real driver implemented yet - only Simulation Mode is supported.")
+    # 실기 - DMD(TI DLP Discovery 4100)와 UV(Thorlabs DC40) 둘 다 실제
+    # 드라이버가 있으므로 각각 실제로 연결을 시도함. 서로 독립된 USB
+    # 장치라, 하나가 실패해도 다른 하나는 그대로 계속 시도함
+    try:
+        from dmd_source import DMDSource
+        dmd = DMDSource()
+        dmd_ok = True
+    except Exception as e:
+        dmd = None
+        dmd_ok = False
+        messages.append(f"DMD: connection failed - {e}")
 
-    # UV는 실제 드라이버(Thorlabs DC40)가 있으므로 실제로 연결을 시도함
     try:
         from uv_source import UVSource
         uv = UVSource()
@@ -89,7 +96,7 @@ def connect(use_mock: bool, notify_listeners: bool = True):
 
     if notify_listeners:
         notify()
-    return False, uv_ok, messages
+    return dmd_ok, uv_ok, messages
 
 
 def disconnect(notify_listeners: bool = True):
