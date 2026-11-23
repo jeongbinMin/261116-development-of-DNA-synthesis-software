@@ -30,6 +30,10 @@ BG_COLOR = "#f2f2f2"
 
 VALVE_IDLE_COLOR = "#d9d9d9"
 VALVE_ACTIVE_COLOR = "#333333"
+# 펌프 박스 글씨 색 - 박스 배경이 밝을 때/어두울 때 모두 대비가 나오도록
+# 박스 색이 바뀔 때 글씨 색도 같이 바꿈
+VALVE_IDLE_TEXT_COLOR = "#1a1a1a"
+VALVE_ACTIVE_TEXT_COLOR = "#ffffff"
 
 # ---- Fluidic Path 유동 애니메이션(Moving Dashed Line) 설정 ----
 # 활성(실제로 용액이 흐르는) 배관의 점선 색상 - 비활성 배관은 원래 색
@@ -731,6 +735,7 @@ class SynthesisTab:
 
         # 사각형(입구 패드) - 선 끝이 테두리에 깔끔하게 덮이도록 맨 마지막에 그림
         self.pump_nodes = {}      # name -> fill_id
+        self.pump_labels = {}     # name -> 박스 안 글씨 text id (박스 색 바뀔 때 글씨 색도 같이 바꾸기 위함)
         self.pump_lines = {}      # name -> 연결선 캔버스 id (디버깅/참조용)
         self.pump_paths = {}      # name -> 흐름 애니메이션용 경로 좌표 리스트
         self.flow_item_defaults = {}  # 캔버스 line id -> (원래 fill, 원래 dash)
@@ -753,11 +758,18 @@ class SynthesisTab:
                     sq_left_x + 3, y0 + 3, sq_right_x - 3, y1 - 3,
                     fill=VALVE_IDLE_COLOR, outline=""
                 )
-                self.fluidic_canvas.create_text(
+                # 글씨 색을 박스 색에 맞춰 같이 바꿔야 함 - 활성화되면 배경이
+                # 진한 회색(VALVE_ACTIVE_COLOR)으로 바뀌는데 글씨가 계속
+                # 검정 고정이라 "글씨랑 배경색이 비슷해서 안 보인다"는
+                # 문제가 있었음. 그래서 텍스트도 id를 저장해뒀다가 박스
+                # 색이 바뀔 때마다 같이 밝은/어두운 글씨로 전환함.
+                label_id = self.fluidic_canvas.create_text(
                     (sq_left_x + sq_right_x) / 2, sy,
-                    text=self.display_names.get(name, name), font=("Segoe UI", 9, "bold")
+                    text=self.display_names.get(name, name), font=("Segoe UI", 9, "bold"),
+                    fill=VALVE_IDLE_TEXT_COLOR,
                 )
                 self.pump_nodes[name] = fill_id
+                self.pump_labels[name] = label_id
                 self.pump_lines[name] = line_ids[name]
                 self.pump_paths[name] = line_paths[name]
                 # 애니메이션이 끝난 뒤 "원래 색"으로 정확히 되돌리기 위해
@@ -868,9 +880,18 @@ class SynthesisTab:
         전체 길이를 기준으로 점선 패턴을 이어서 그려주므로, 꺾인 구간도
         추가 보정 없이 자연스럽게 이어져서 움직인다."""
         for name, fill_id in self.pump_nodes.items():
+            is_active = name == function_name
             self.fluidic_canvas.itemconfigure(
-                fill_id, fill=VALVE_ACTIVE_COLOR if name == function_name else VALVE_IDLE_COLOR
+                fill_id, fill=VALVE_ACTIVE_COLOR if is_active else VALVE_IDLE_COLOR
             )
+            # 박스 배경이 진하게 바뀌면 글씨도 밝은 색으로 같이 바꿔야
+            # 대비가 유지됨 (안 그러면 어두운 배경 위에 어두운 글씨가
+            # 남아서 "글씨랑 배경색이 비슷해서 안 보인다"가 됨)
+            label_id = self.pump_labels.get(name)
+            if label_id is not None:
+                self.fluidic_canvas.itemconfigure(
+                    label_id, fill=VALVE_ACTIVE_TEXT_COLOR if is_active else VALVE_IDLE_TEXT_COLOR
+                )
 
         port = cfg.VALVE_PORTS.get(function_name)
         display_name = self.display_names.get(function_name, function_name)
@@ -957,6 +978,8 @@ class SynthesisTab:
         self.active_flow_items = []
         for fill_id in self.pump_nodes.values():
             self.fluidic_canvas.itemconfigure(fill_id, fill=VALVE_IDLE_COLOR)
+        for label_id in self.pump_labels.values():
+            self.fluidic_canvas.itemconfigure(label_id, fill=VALVE_IDLE_TEXT_COLOR)
 
     def _file_row(self, parent, label, var, is_dir):
         row = ttk.Frame(parent)
