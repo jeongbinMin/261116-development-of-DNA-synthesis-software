@@ -34,6 +34,7 @@ VALVE_ACTIVE_COLOR = "#333333"
 # 박스 색이 바뀔 때 글씨 색도 같이 바꿈
 VALVE_IDLE_TEXT_COLOR = "#1a1a1a"
 VALVE_ACTIVE_TEXT_COLOR = "#ffffff"
+VALVE_IDLE_BORDER_COLOR = "#1a1a1a"
 
 # ---- Fluidic Path 유동 애니메이션(Moving Dashed Line) 설정 ----
 # 활성(실제로 용액이 흐르는) 배관의 점선 색상 - 비활성 배관은 원래 색
@@ -736,6 +737,7 @@ class SynthesisTab:
         # 사각형(입구 패드) - 선 끝이 테두리에 깔끔하게 덮이도록 맨 마지막에 그림
         self.pump_nodes = {}      # name -> fill_id
         self.pump_labels = {}     # name -> 박스 안 글씨 text id (박스 색 바뀔 때 글씨 색도 같이 바꾸기 위함)
+        self.pump_borders = {}    # name -> 박스 테두리 id (활성화되면 흐름 색과 같은 청록색으로)
         self.pump_lines = {}      # name -> 연결선 캔버스 id (디버깅/참조용)
         self.pump_paths = {}      # name -> 흐름 애니메이션용 경로 좌표 리스트
         self.flow_item_defaults = {}  # 캔버스 line id -> (원래 fill, 원래 dash)
@@ -752,8 +754,12 @@ class SynthesisTab:
             sy = square_center_y(i)
             y0, y1 = sy - sq_h / 2, sy + sq_h / 2
             if has_pump:
-                self.fluidic_canvas.create_rectangle(sq_left_x, y0, sq_right_x, y1,
-                                                      outline="#1a1a1a", width=2)
+                # 활성화되면 테두리도 흐름 색(FLOW_ACTIVE_LINE_COLOR)과
+                # 같은 청록색으로 바꿔서, "지금 흐르고 있는 배관과 그
+                # 출발점(펌프 박스)"이 같은 색으로 한눈에 이어져 보이게 함
+                border_id = self.fluidic_canvas.create_rectangle(
+                    sq_left_x, y0, sq_right_x, y1, outline="#1a1a1a", width=2
+                )
                 fill_id = self.fluidic_canvas.create_rectangle(
                     sq_left_x + 3, y0 + 3, sq_right_x - 3, y1 - 3,
                     fill=VALVE_IDLE_COLOR, outline=""
@@ -770,6 +776,7 @@ class SynthesisTab:
                 )
                 self.pump_nodes[name] = fill_id
                 self.pump_labels[name] = label_id
+                self.pump_borders[name] = border_id
                 self.pump_lines[name] = line_ids[name]
                 self.pump_paths[name] = line_paths[name]
                 # 애니메이션이 끝난 뒤 "원래 색"으로 정확히 되돌리기 위해
@@ -892,6 +899,14 @@ class SynthesisTab:
                 self.fluidic_canvas.itemconfigure(
                     label_id, fill=VALVE_ACTIVE_TEXT_COLOR if is_active else VALVE_IDLE_TEXT_COLOR
                 )
+            # 테두리도 흐르는 배관과 같은 청록색으로 - "흐르는 색과
+            # 같게" 요청대로, 활성 펌프 박스에서 바로 그 색의 배관이
+            # 뻗어나가는 것처럼 한눈에 연결되어 보이게 함
+            border_id = self.pump_borders.get(name)
+            if border_id is not None:
+                self.fluidic_canvas.itemconfigure(
+                    border_id, outline=FLOW_ACTIVE_LINE_COLOR if is_active else VALVE_IDLE_BORDER_COLOR
+                )
 
         port = cfg.VALVE_PORTS.get(function_name)
         display_name = self.display_names.get(function_name, function_name)
@@ -980,6 +995,8 @@ class SynthesisTab:
             self.fluidic_canvas.itemconfigure(fill_id, fill=VALVE_IDLE_COLOR)
         for label_id in self.pump_labels.values():
             self.fluidic_canvas.itemconfigure(label_id, fill=VALVE_IDLE_TEXT_COLOR)
+        for border_id in self.pump_borders.values():
+            self.fluidic_canvas.itemconfigure(border_id, outline=VALVE_IDLE_BORDER_COLOR)
 
     def _file_row(self, parent, label, var, is_dir):
         row = ttk.Frame(parent)
