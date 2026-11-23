@@ -701,10 +701,13 @@ class SynthesisTab:
             hx, hy = self.port_points[port_number]
             s = 1 if i <= 5 else -1
             path = self._channel_path(i, sq_right_x, sy, hx, hy, hr, s, D, x_diag)
+            # 연결된 배관 두께를 Flow Cell->Waste 연결관(width=3)과 통일 -
+            # 예전 1.25는 너무 얇아서, 흐르는 중 점선+활성색으로 바뀌어도
+            # 잘 안 보였음(얇은 선 위의 점선은 특히 눈에 덜 띔)
             line_id = self.fluidic_canvas.create_line(
                 *[c for pt in path for c in pt],
                 fill="#404040" if has_pump else "#bfbfbf",
-                width=1.25 if has_pump else 1,
+                width=3 if has_pump else 1,
                 dash=() if has_pump else (2, 3),
             )
             line_ids[name] = line_id
