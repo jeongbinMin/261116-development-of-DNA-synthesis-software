@@ -35,15 +35,19 @@ VALVE_ACTIVE_COLOR = "#333333"
 # 활성(실제로 용액이 흐르는) 배관의 점선 색상 - 비활성 배관은 원래 색
 # (아래 _build_fluidic_path에서 만들 때 쓰는 색, 예: "#404040")을 그대로 둠
 FLOW_ACTIVE_LINE_COLOR = "#0891b2"   # 청록색 계열
-FLOW_DASH_PATTERN = (6, 4)           # 점선 간격 - 배관 두께/연결 구조는 그대로 두고 패턴만 추가
+# 점선 간격 - 패턴이 너무 촘촘하면(예전 6,4) 한 프레임 이동량(몇 px)이
+# 패턴 주기(10px)에 비해 작아서 가만히 있는 것처럼 보이기 쉬움. 한 칸을
+# 더 크게 둬서(주기 20px) 같은 속도로도 "확실히 움직인다"는 느낌이 들게 함
+FLOW_DASH_PATTERN = (12, 8)
 FLOW_ANIM_INTERVAL_MS = 40           # ~25fps - 부드러우면서 CPU 부담도 적은 값
 
 # 점선 이동 속도(픽셀/프레임)를 유량(uL/s)에 따라 "살짝" 조절하되, 좁은
 # 범위 안에서만 움직이게 해서 실제 유량 측정값으로 오인되지 않게 함 -
 # 어디까지나 "흐르고 있다"는 느낌을 주기 위한 시각 효과일 뿐, 정밀한
-# 유량 지표가 아님.
-FLOW_DASH_SPEED_MIN = 3.0
-FLOW_DASH_SPEED_MAX = 10.0
+# 유량 지표가 아님. (최소값도 눈에 띄게 올려서 "점선인데 안 움직이는 것
+# 처럼 보인다"는 문제를 방지함)
+FLOW_DASH_SPEED_MIN = 6.0
+FLOW_DASH_SPEED_MAX = 18.0
 FLOW_DASH_SPEED_REF_RATE_UL_S = 50.0  # 이 근처 유량이면 "중간 속도"로 보이게 하는 기준값
 
 
@@ -661,9 +665,25 @@ class SynthesisTab:
         canvas_w = waste_x1 + 20
         canvas_h = max(square_center_y(n - 1) + sq_h / 2, cy + r + 95) + 20
 
+        # 창을 처음 열었을 때(또는 리사이즈할 때) 실제로 배정된 영역이
+        # 이 도면의 기준 크기(canvas_w x canvas_h)보다 좁으면 Waste 등
+        # 오른쪽 구성요소가 그냥 잘려서 안 보였음. 그래서 캔버스 자체는
+        # 컨테이너(frame) 크기에 맞춰 늘어나게 하고(fill="both"), <Configure>
+        # 가 올 때마다 "기준 크기 대비 가로/세로 중 더 작게 맞는" 축척으로
+        # 전체 도면(canvas.scale)을 다시 그려서 항상 전부 보이게 함 - 종횡비는
+        # 유지되고(min을 쓰므로) 어떤 구성요소도 잘리지 않음.
+        self._fluidic_base_w = canvas_w
+        self._fluidic_base_h = canvas_h
+        self._fluidic_scale = 1.0
+
         self.fluidic_canvas = tk.Canvas(frame, width=canvas_w, height=canvas_h,
                                          bg="white", highlightthickness=0)
-        self.fluidic_canvas.pack()
+        self.fluidic_canvas.pack(fill="both", expand=True)
+        # frame(LabelFrame)이 아니라 캔버스 자신의 <Configure>에 바인딩 -
+        # frame의 padding(10)만큼 캔버스 실제 영역이 더 작기 때문에, frame
+        # 크기 기준으로 계산하면 살짝 과대평가되어 가장자리가 미세하게
+        # 잘릴 수 있음
+        self.fluidic_canvas.bind("<Configure>", self._on_fluidic_resize)
         self._rv_center = (cx, cy)
 
         self.port_points = {k + 1: self._hole_point(cx, cy, r, k) for k in range(n)}
@@ -802,6 +822,33 @@ class SynthesisTab:
         t = (math.log(ratio) - math.log(0.3)) / (math.log(3.0) - math.log(0.3))
         return FLOW_DASH_SPEED_MIN + t * (FLOW_DASH_SPEED_MAX - FLOW_DASH_SPEED_MIN)
 
+    def _scale_pt(self, pt):
+        """도면을 처음 그릴 때의 기준(BASE) 좌표 하나를 현재 축척
+        (self._fluidic_scale)으로 변환. 바늘(needle) 위치 계산처럼, 그려진
+        뒤에 좌표를 다시 계산해서 써야 하는 곳에서만 필요함 - 선/도형
+        자체는 canvas.scale()이 알아서 다시 그려주므로 이 함수를 쓸
+        필요가 없음."""
+        s = self._fluidic_scale
+        return pt[0] * s, pt[1] * s
+
+    def _on_fluidic_resize(self, event):
+        """Fluidic Path 컨테이너 크기가 바뀔 때마다(창을 처음 열 때도
+        한 번 발생함), 기준 치수 대비 가로/세로 중 더 작게 맞는 축척으로
+        전체 도면을 다시 그림 - 종횡비가 유지되고(min을 쓰므로) Flow
+        Cell/Waste를 포함해 어떤 구성요소도 잘리지 않음. 너무 작아지면
+        알아보기 힘들어서 0.5배 밑으로는 안 줄임."""
+        if event.width <= 1 or event.height <= 1:
+            return
+        target_scale = min(event.width / self._fluidic_base_w,
+                            event.height / self._fluidic_base_h)
+        target_scale = max(0.5, target_scale)
+        if abs(target_scale - self._fluidic_scale) < 0.01:
+            return
+        factor = target_scale / self._fluidic_scale
+        self.fluidic_canvas.scale("all", 0, 0, factor, factor)
+        self._fluidic_scale = target_scale
+        self.fluidic_canvas.configure(scrollregion=self.fluidic_canvas.bbox("all"))
+
     def _start_flow_animation(self, function_name, flow_rate_ul_s=None, reverse=False):
         """선택된 포트의 배관(pump -> valve)과 공용 배관(valve 출력 ->
         Flow Cell), 실제로 용액이 흐르는 두 구간만 Moving Dashed Line으로
@@ -822,11 +869,15 @@ class SynthesisTab:
         )
 
         # 바늘(needle)을 현재 선택된 포트 쪽으로 회전 - 멈춘 뒤에도 그대로 유지되어
-        # 실제 밸브처럼 "마지막으로 돌아간 위치"를 계속 보여줌
+        # 실제 밸브처럼 "마지막으로 돌아간 위치"를 계속 보여줌. 좌표는
+        # 도면을 처음 그릴 때의 기준(BASE) 값이라, 리사이즈로 도면 전체가
+        # 축척(_fluidic_scale)된 뒤에는 그대로 쓰면 어긋나므로 _scale_pt로
+        # 변환해서 적용함.
         port_point = self.port_points.get(port)
         if port_point:
-            px, py = port_point
-            self.fluidic_canvas.coords(self.rv_needle, *self._rv_center, px, py)
+            cx, cy = self._scale_pt(self._rv_center)
+            px, py = self._scale_pt(port_point)
+            self.fluidic_canvas.coords(self.rv_needle, cx, cy, px, py)
             self.fluidic_canvas.tag_raise(self.rv_needle)
 
         # 실제로 흐르는 구간: 해당 포트의 공급 배관 + 밸브->Flow Cell 공용
@@ -867,8 +918,19 @@ class SynthesisTab:
         if not self.flow_animating:
             return
         self.flow_dash_offset += self.flow_dash_speed
+        # 정수로 반올림 - 일부 Tk 빌드는 -dashoffset에 소수점이 많이 붙은
+        # 값을 줬을 때 매 프레임 거의 같은 화면 위치로 반올림해버려,
+        # 내부 값은 바뀌는데 실제로는 멈춰 보이는 문제가 있을 수 있어서
+        # 안전하게 정수 픽셀 단위로만 갱신함
+        offset = round(self.flow_dash_offset)
         for item_id in self.active_flow_items:
-            self.fluidic_canvas.itemconfigure(item_id, dashoffset=self.flow_dash_offset)
+            # dash도 매번 같이 지정 - dashoffset만 바꿨을 때 일부 환경에서
+            # 점선 패턴 자체가 풀리는 경우를 막기 위한 안전장치
+            self.fluidic_canvas.itemconfigure(item_id, dash=FLOW_DASH_PATTERN, dashoffset=offset)
+        # 다음 idle 사이클까지 기다리지 않고 바로 화면에 반영 - 큰 비용은
+        # 아니고(이 캔버스 하나만 갱신), 혹시 재생이 밀리는 환경에서도
+        # 매 프레임 확실히 다시 그려지도록 하기 위함
+        self.fluidic_canvas.update_idletasks()
         self.root.after(FLOW_ANIM_INTERVAL_MS, self._animate_flow)
 
     def _stop_flow_animation(self):
