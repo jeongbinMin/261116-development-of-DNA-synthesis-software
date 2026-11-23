@@ -57,6 +57,11 @@ class MockUVSource:
         self._on = False
         self._current = 0.0
 
+    def set_mode_cw(self):
+        # 실제 UVSource(uv_source.py)와 메서드 이름/개수를 맞춰서, Manual
+        # Control의 UV 조작 코드가 Mock/실기 구분 없이 똑같이 동작하게 함
+        print("  [MockUV] CW 모드 설정")
+
     def set_current(self, amps: float):
         self._current = amps
         print(f"  [MockUV] 전류 {amps}A 설정")
@@ -71,6 +76,10 @@ class MockUVSource:
 
     def is_on(self) -> bool:
         return self._on
+
+    def measure_current(self) -> float:
+        # 실제 측정 대신, 마지막으로 설정한 전류값을 그대로 돌려줌(시뮬레이션)
+        return self._current
 
     def close(self):
         print("  [MockUV] 연결 종료")

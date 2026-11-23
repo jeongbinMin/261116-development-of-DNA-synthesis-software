@@ -71,17 +71,24 @@ class ManualControlTab:
 
         self._build_valve_section(body)
         self._build_pump_section(body)
+        self._build_uv_section(body)
         self._build_display_name_section(body)
 
     def _refresh_dmd_status(self):
         """dmd_uv_state가 바뀔 때마다(이 탭의 Connect에서 바뀌었든,
-        Synthesis 탭에서 바뀌었든) 호출되어 여기 표시만 갱신함."""
+        Synthesis 탭에서 바뀌었든) 호출되어 여기 표시와 UV 조작 버튼들의
+        활성/비활성 상태를 갱신함."""
         dmd_ok = dmd_uv_state.is_dmd_connected()
         uv_ok = dmd_uv_state.is_uv_connected()
         self.dmd_uv_status_label.configure(
             text=f"DMD: {'Connected' if dmd_ok else 'Not connected'}  |  "
                  f"UV: {'Connected' if uv_ok else 'Not connected'}"
         )
+        if hasattr(self, "uv_set_button"):
+            uv_state = "normal" if uv_ok else "disabled"
+            for btn in (self.uv_set_button, self.uv_on_button, self.uv_off_button,
+                        self.uv_measure_button):
+                btn.configure(state=uv_state)
 
     def _build_valve_section(self, parent):
         frame = ttk.LabelFrame(parent, text="12-Port Switching Valve", padding=10)
@@ -154,6 +161,82 @@ class ManualControlTab:
 
         self.pump_status_label = ttk.Label(frame, text="")
         self.pump_status_label.pack(anchor="w", pady=(5, 0))
+
+    def _build_uv_section(self, parent):
+        """UV LED 드라이버(Thorlabs DC40) 직접 조작 - 전류 설정, ON/OFF,
+        측정. DMD/UV는 Connect 버튼(또는 Synthesis 탭)에서 이미 연결된
+        상태를 그대로 쓰므로, 여기엔 별도 Connect가 없고 연결 안 됐으면
+        버튼이 비활성 상태로 있음(_refresh_dmd_status가 관리)."""
+        frame = ttk.LabelFrame(parent, text="UV Source (Thorlabs DC40)", padding=10)
+        frame.pack(fill="x", pady=(0, 10))
+
+        grid = ttk.Frame(frame)
+        grid.pack(fill="x")
+
+        ttk.Label(grid, text="Current (A):").grid(row=0, column=0, sticky="w", pady=4)
+        row = ttk.Frame(grid)
+        row.grid(row=0, column=1, sticky="w", pady=4)
+        self.uv_current_var = tk.DoubleVar(value=0.5)
+        ttk.Entry(row, textvariable=self.uv_current_var, width=10).pack(side="left")
+        self.uv_set_button = ttk.Button(row, text="Set Current", command=self._on_uv_set_current,
+                                         state="disabled")
+        self.uv_set_button.pack(side="left", padx=(10, 0))
+
+        ttk.Label(grid, text="").grid(row=1, column=0, sticky="w", pady=4)
+        btn_row = ttk.Frame(grid)
+        btn_row.grid(row=1, column=1, sticky="w", pady=4)
+        self.uv_on_button = ttk.Button(btn_row, text="LED ON", command=self._on_uv_on, state="disabled")
+        self.uv_on_button.pack(side="left")
+        self.uv_off_button = ttk.Button(btn_row, text="LED OFF", command=self._on_uv_off, state="disabled")
+        self.uv_off_button.pack(side="left", padx=5)
+        self.uv_measure_button = ttk.Button(btn_row, text="Measure Current",
+                                             command=self._on_uv_measure, state="disabled")
+        self.uv_measure_button.pack(side="left", padx=5)
+
+        self.uv_status_label = ttk.Label(frame, text="")
+        self.uv_status_label.pack(anchor="w", pady=(5, 0))
+
+    def _on_uv_set_current(self):
+        uv = dmd_uv_state.uv
+        if uv is None:
+            return
+        amps = self.uv_current_var.get()
+        try:
+            uv.set_current(amps)
+            self.uv_status_label.configure(text=f"Current set to {amps}A")
+        except Exception as e:
+            self.uv_status_label.configure(text=f"Set current failed: {e}")
+
+    def _on_uv_on(self):
+        uv = dmd_uv_state.uv
+        if uv is None:
+            return
+        try:
+            uv.set_mode_cw()
+            uv.on()
+            self.uv_status_label.configure(text="UV: ON")
+        except Exception as e:
+            self.uv_status_label.configure(text=f"UV ON failed: {e}")
+
+    def _on_uv_off(self):
+        uv = dmd_uv_state.uv
+        if uv is None:
+            return
+        try:
+            uv.off()
+            self.uv_status_label.configure(text="UV: OFF")
+        except Exception as e:
+            self.uv_status_label.configure(text=f"UV OFF failed: {e}")
+
+    def _on_uv_measure(self):
+        uv = dmd_uv_state.uv
+        if uv is None:
+            return
+        try:
+            value = uv.measure_current()
+            self.uv_status_label.configure(text=f"Measured current: {value:.3f}A")
+        except Exception as e:
+            self.uv_status_label.configure(text=f"Measure failed: {e}")
 
     def _build_display_name_section(self, parent):
         """선택된 펌프의 화면 표시 이름만 다루는 별도 박스 - 분주 기능과

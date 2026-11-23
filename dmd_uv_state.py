@@ -97,6 +97,12 @@ def disconnect(notify_listeners: bool = True):
     if dmd is not None:
         dmd.close()
     if uv is not None:
+        # 연결을 끊기 전에 LED를 꺼서, 연결이 끊어진 뒤에도 LED가 켜진 채로
+        # 남는 일이 없게 함(안전을 위해). off()가 실패해도 close()는 계속 진행
+        try:
+            uv.off()
+        except Exception:
+            pass
         uv.close()
     dmd = None
     uv = None
