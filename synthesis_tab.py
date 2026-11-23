@@ -31,6 +31,21 @@ BG_COLOR = "#f2f2f2"
 VALVE_IDLE_COLOR = "#d9d9d9"
 VALVE_ACTIVE_COLOR = "#333333"
 
+# ---- Fluidic Path 유동 애니메이션(Moving Dashed Line) 설정 ----
+# 활성(실제로 용액이 흐르는) 배관의 점선 색상 - 비활성 배관은 원래 색
+# (아래 _build_fluidic_path에서 만들 때 쓰는 색, 예: "#404040")을 그대로 둠
+FLOW_ACTIVE_LINE_COLOR = "#0891b2"   # 청록색 계열
+FLOW_DASH_PATTERN = (6, 4)           # 점선 간격 - 배관 두께/연결 구조는 그대로 두고 패턴만 추가
+FLOW_ANIM_INTERVAL_MS = 40           # ~25fps - 부드러우면서 CPU 부담도 적은 값
+
+# 점선 이동 속도(픽셀/프레임)를 유량(uL/s)에 따라 "살짝" 조절하되, 좁은
+# 범위 안에서만 움직이게 해서 실제 유량 측정값으로 오인되지 않게 함 -
+# 어디까지나 "흐르고 있다"는 느낌을 주기 위한 시각 효과일 뿐, 정밀한
+# 유량 지표가 아님.
+FLOW_DASH_SPEED_MIN = 3.0
+FLOW_DASH_SPEED_MAX = 10.0
+FLOW_DASH_SPEED_REF_RATE_UL_S = 50.0  # 이 근처 유량이면 "중간 속도"로 보이게 하는 기준값
+
 
 def compute_reagent_totals(steps: list) -> dict:
     """FluidStep들의 function_name별 amount_ul 합계. DmdExposeStep 등은 무시."""
@@ -694,6 +709,7 @@ class SynthesisTab:
         self.pump_nodes = {}      # name -> fill_id
         self.pump_lines = {}      # name -> 연결선 캔버스 id (디버깅/참조용)
         self.pump_paths = {}      # name -> 흐름 애니메이션용 경로 좌표 리스트
+        self.flow_item_defaults = {}  # 캔버스 line id -> (원래 fill, 원래 dash)
         for i in range(n):
             port_number = i + 1
             name = port_to_name.get(port_number)
@@ -714,6 +730,10 @@ class SynthesisTab:
                 self.pump_nodes[name] = fill_id
                 self.pump_lines[name] = line_ids[name]
                 self.pump_paths[name] = line_paths[name]
+                # 애니메이션이 끝난 뒤 "원래 색"으로 정확히 되돌리기 위해
+                # 배관마다 원래(fill, dash) 값을 따로 기억해둠 - rv_to_fc_line
+                # 처럼 색이 다른 배관도 있어서, 공통 상수 하나로 되돌리면 안 됨
+                self.flow_item_defaults[line_ids[name]] = ("#404040", ())
             else:
                 self.fluidic_canvas.create_rectangle(sq_left_x, y0, sq_right_x, y1,
                                                       outline="#bfbfbf", width=2, dash=(3, 2))
@@ -727,6 +747,7 @@ class SynthesisTab:
         self.rv_to_fc_line = self.fluidic_canvas.create_line(
             outlet_point[0], outlet_point[1], fc_x0, cy, fill="#9aa5b1", width=3
         )
+        self.flow_item_defaults[self.rv_to_fc_line] = ("#9aa5b1", ())
         self.fluidic_canvas.create_rectangle(fc_x0, fc_y0, fc_x1, fc_y1,
                                               outline="#1a1a1a", width=2)
         self.fluidic_canvas.create_text((fc_x0 + fc_x1) / 2, cy,
@@ -744,33 +765,51 @@ class SynthesisTab:
         self.fluidic_canvas.create_text((waste_x0 + waste_x1) / 2, (waste_y0 + waste_y1) / 2,
                                          text="WASTE", font=("Segoe UI", 9))
 
-        self.flow_dots = []
+        self.active_flow_items = []   # 현재 "흐르는 중"으로 표시된 캔버스 line id들
         self.flow_animating = False
+        self.flow_dash_offset = 0.0
+        self.flow_dash_speed = 0.0
+        self._dashoffset_supported = None  # 캔버스가 -dashoffset을 지원하는지 (최초 1회 확인 후 캐시)
+        # Moving Dashed Line 효과 자체를 켜고 끄는 독립 스위치 - 꺼도 포트
+        # 하이라이트/바늘 회전/Commanded Reagent 표시 같은 기존 동작은
+        # 그대로 작동하고, 점선이 움직이는 연출만 생략됨(배관은 원래
+        # 색/실선 그대로). 필요하면 self.flow_animation_enabled = False로
+        # 끌 수 있음.
+        self.flow_animation_enabled = True
         self.reagent_label = ttk.Label(frame, text="Commanded Reagent: none")
         self.reagent_label.pack(anchor="w", pady=(5, 0))
 
-    @staticmethod
-    def _point_on_path(path, t):
-        """path(점 리스트)를 따라 0~1 사이 비율 t에 해당하는 좌표를 보간.
-        여러 선분으로 이루어진 경로(꺾인 선)를 하나의 흐름으로 따라가기 위함."""
-        seg_lengths = [
-            math.dist(path[i], path[i + 1]) for i in range(len(path) - 1)
-        ]
-        total = sum(seg_lengths) or 1.0
-        target = t * total
-        acc = 0.0
-        for i, seg_len in enumerate(seg_lengths):
-            if acc + seg_len >= target or i == len(seg_lengths) - 1:
-                local_t = 0 if seg_len == 0 else (target - acc) / seg_len
-                x0, y0 = path[i]
-                x1, y1 = path[i + 1]
-                return x0 + (x1 - x0) * local_t, y0 + (y1 - y0) * local_t
-            acc += seg_len
-        return path[-1]
+    def _canvas_supports_dashoffset(self):
+        """Tk의 캔버스 line -dashoffset 옵션 지원 여부를 최초 1회만 실제로
+        시험해보고 캐시함 (Tk 8.5 이상이면 항상 있지만, 혹시 모를 구버전
+        환경에서 예외 없이 안전하게 대비책으로 넘어가기 위함)."""
+        if self._dashoffset_supported is None:
+            try:
+                test_id = self.fluidic_canvas.create_line(0, 0, 1, 1, dash=(2, 2), dashoffset=0)
+                self.fluidic_canvas.delete(test_id)
+                self._dashoffset_supported = True
+            except tk.TclError:
+                self._dashoffset_supported = False
+        return self._dashoffset_supported
 
-    def _start_flow_animation(self, function_name):
-        """점선 오프셋(marching ants) 대신, 경로를 따라 실제로 움직이는 작은 점으로
-        '로딩 애니메이션' 느낌을 줌 - dashoffset보다 플랫폼에 상관없이 안정적으로 보임."""
+    def _flow_dash_speed(self, flow_rate_ul_s):
+        """유량(uL/s)에 따라 점선 이동 속도를 FLOW_DASH_SPEED_MIN~MAX
+        사이에서만 살짝 조절 - 실제 유량을 그대로 보여주는 게 아니라,
+        '빠른 스텝은 조금 더 빠르게 보인다' 정도의 시각적 힌트일 뿐임."""
+        if not flow_rate_ul_s or flow_rate_ul_s <= 0:
+            return (FLOW_DASH_SPEED_MIN + FLOW_DASH_SPEED_MAX) / 2
+        ratio = min(max(flow_rate_ul_s / FLOW_DASH_SPEED_REF_RATE_UL_S, 0.3), 3.0)
+        t = (math.log(ratio) - math.log(0.3)) / (math.log(3.0) - math.log(0.3))
+        return FLOW_DASH_SPEED_MIN + t * (FLOW_DASH_SPEED_MAX - FLOW_DASH_SPEED_MIN)
+
+    def _start_flow_animation(self, function_name, flow_rate_ul_s=None, reverse=False):
+        """선택된 포트의 배관(pump -> valve)과 공용 배관(valve 출력 ->
+        Flow Cell), 실제로 용액이 흐르는 두 구간만 Moving Dashed Line으로
+        표시. 배관의 형태/두께/연결 구조는 그대로 두고 fill 색과 dash
+        패턴만 바꾼 뒤, dashoffset을 매 프레임 증가시켜 점선이 유동 방향
+        으로 흘러가는 것처럼 보이게 함 - Tk는 꺾인 선(polyline)에서도
+        전체 길이를 기준으로 점선 패턴을 이어서 그려주므로, 꺾인 구간도
+        추가 보정 없이 자연스럽게 이어져서 움직인다."""
         for name, fill_id in self.pump_nodes.items():
             self.fluidic_canvas.itemconfigure(
                 fill_id, fill=VALVE_ACTIVE_COLOR if name == function_name else VALVE_IDLE_COLOR
@@ -790,39 +829,57 @@ class SynthesisTab:
             self.fluidic_canvas.coords(self.rv_needle, *self._rv_center, px, py)
             self.fluidic_canvas.tag_raise(self.rv_needle)
 
-        self.flow_dot_paths = []
-        pump_path = self.pump_paths.get(function_name)
-        if pump_path:
-            self.flow_dot_paths.append(pump_path)
-        self.flow_dot_paths.append(self.common_flow_path)
+        # 실제로 흐르는 구간: 해당 포트의 공급 배관 + 밸브->Flow Cell 공용
+        # 배관. 그 외(다른 포트, Flow Cell->Waste 등)는 건드리지 않음 -
+        # "여러 배관 중 실제 용액이 이동하는 경로에만 애니메이션 적용".
+        self.active_flow_items = []
+        pump_line_id = self.pump_lines.get(function_name)
+        if pump_line_id is not None:
+            self.active_flow_items.append(pump_line_id)
+        self.active_flow_items.append(self.rv_to_fc_line)
 
-        for path in self.flow_dot_paths:
-            x, y = path[0]
-            self.flow_dots.append(
-                self.fluidic_canvas.create_oval(x - 4, y - 4, x + 4, y + 4,
-                                                 fill="#333333", outline="")
-            )
+        if not self.flow_animation_enabled:
+            # 독립 스위치가 꺼져 있으면 Moving Dashed Line만 생략 - 위의
+            # 포트 하이라이트/바늘 회전/Commanded Reagent 표시는 그대로 적용됨
+            self.flow_animating = False
+            return
+
+        speed = self._flow_dash_speed(flow_rate_ul_s)
+        self.flow_dash_offset = 0.0
+        self.flow_dash_speed = -speed if reverse else speed
+
+        supports_dashoffset = self._canvas_supports_dashoffset()
+        for item_id in self.active_flow_items:
+            kwargs = dict(fill=FLOW_ACTIVE_LINE_COLOR, dash=FLOW_DASH_PATTERN)
+            if supports_dashoffset:
+                kwargs["dashoffset"] = 0
+            self.fluidic_canvas.itemconfigure(item_id, **kwargs)
 
         self.flow_animating = True
-        self._animate_flow(0.0)
+        if supports_dashoffset:
+            self._animate_flow()
+        # supports_dashoffset이 False인 (사실상 없는) 경우에도, 점선 색이
+        # 바뀐 채로 고정되어 최소한 "지금 어떤 경로가 활성 상태인지"는
+        # 계속 보여줌 - 그냥 멈춰 보이진 않지만 완전히 아무 표시가 없는
+        # 것보다는 나은 대비책.
 
-    def _animate_flow(self, t):
+    def _animate_flow(self):
         if not self.flow_animating:
             return
-        for dot_id, path in zip(self.flow_dots, self.flow_dot_paths):
-            x, y = self._point_on_path(path, t)
-            self.fluidic_canvas.coords(dot_id, x - 4, y - 4, x + 4, y + 4)
-        next_t = t + 0.04
-        if next_t > 1.0:
-            next_t -= 1.0
-        self.root.after(40, self._animate_flow, next_t)
+        self.flow_dash_offset += self.flow_dash_speed
+        for item_id in self.active_flow_items:
+            self.fluidic_canvas.itemconfigure(item_id, dashoffset=self.flow_dash_offset)
+        self.root.after(FLOW_ANIM_INTERVAL_MS, self._animate_flow)
 
     def _stop_flow_animation(self):
         self.flow_animating = False
-        for dot_id in self.flow_dots:
-            self.fluidic_canvas.delete(dot_id)
-        self.flow_dots = []
-        self.flow_dot_paths = []
+        for item_id in self.active_flow_items:
+            fill, dash = self.flow_item_defaults.get(item_id, ("#404040", ()))
+            kwargs = dict(fill=fill, dash=dash)
+            if self._dashoffset_supported:
+                kwargs["dashoffset"] = 0
+            self.fluidic_canvas.itemconfigure(item_id, **kwargs)
+        self.active_flow_items = []
         for fill_id in self.pump_nodes.values():
             self.fluidic_canvas.itemconfigure(fill_id, fill=VALVE_IDLE_COLOR)
 
@@ -1105,7 +1162,11 @@ class SynthesisTab:
                     self.root.after(0, self._highlight_sequence_base, cycle_index)
 
                 if isinstance(step, FluidStep):
-                    self.root.after(0, self._start_flow_animation, step.function_name)
+                    # 점선 이동 속도는 "이 스텝의 유량" 정도만 참고하는 시각
+                    # 효과용 - step.execute()에 넘기는 실제 펌프 제어값은
+                    # 그대로(amount_ul/time_s) 두고, 여기선 그 비율만 따로 계산
+                    flow_rate = (step.amount_ul / step.time_s) if step.time_s > 0 else None
+                    self.root.after(0, self._start_flow_animation, step.function_name, flow_rate)
                 elif isinstance(step, DmdExposeStep):
                     info = (f"Executing  |  Exposure: {step.exposure_time_s}s  |  "
                             f"UV: {step.uv_current_amps}A")
