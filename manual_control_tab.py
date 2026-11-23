@@ -208,13 +208,24 @@ class ManualControlTab:
             self.uv_status_label.configure(text=f"Set current failed: {e}")
 
     def _on_uv_on(self):
+        # "LED ON"을 눌렀을 때 화면에는 "UV: ON"이라고 뜨는데 실제 LED는 안
+        # 켜지는 문제가 있었음 - 원인은 전류(Current)를 "Set Current"로
+        # 따로 눌러서 보내지 않으면, 장비 쪽 전류 설정값이 0A(또는 마지막
+        # 설정값)로 남아있어서 출력은 켜져도 빛이 안 나왔던 것. 그래서
+        # LED ON을 누를 때마다 지금 입력칸에 있는 전류값을 항상 같이
+        # 보내도록 해서, "Set Current"를 깜빡 안 눌러도 항상 반영되게 함.
         uv = dmd_uv_state.uv
         if uv is None:
             return
+        amps = self.uv_current_var.get()
+        if amps <= 0:
+            self.uv_status_label.configure(text="Current must be greater than 0 to turn the LED on.")
+            return
         try:
             uv.set_mode_cw()
+            uv.set_current(amps)
             uv.on()
-            self.uv_status_label.configure(text="UV: ON")
+            self.uv_status_label.configure(text=f"UV: ON ({amps}A)")
         except Exception as e:
             self.uv_status_label.configure(text=f"UV ON failed: {e}")
 
