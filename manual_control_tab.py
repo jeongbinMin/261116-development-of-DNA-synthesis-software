@@ -59,10 +59,10 @@ class ManualControlTab:
         self.conn_status_label = ttk.Label(conn_frame, text="Not connected")
         self.conn_status_label.pack(side="left", padx=20)
 
-        # DMD/UV 연결은 Synthesis 탭의 "Connect DMD" 버튼에서만 하지만(한
-        # 곳에서만 연결하도록 해서 두 탭 상태가 어긋나지 않게 함), 지금
-        # 연결돼 있는지는 Manual Control에서 장비를 만질 때도 바로 보여야
-        # 해서 읽기 전용으로 같이 표시함
+        # DMD/UV도 Connect 한 번에 같이 연결되므로(펌프/밸브와 동일한
+        # Simulation Mode 체크를 그대로 따름), 상태만 따로 표시 - 실제
+        # 연결/해제는 dmd_uv_state를 통해 Synthesis 탭과 공유되므로 어느
+        # 쪽에서 연결하든 항상 같은 값을 보여줌
         self.dmd_uv_status_label = ttk.Label(conn_frame, text="")
         self.dmd_uv_status_label.pack(side="left", padx=(0, 10))
 
@@ -74,13 +74,13 @@ class ManualControlTab:
         self._build_display_name_section(body)
 
     def _refresh_dmd_status(self):
-        """dmd_uv_state가 바뀔 때마다(Synthesis 탭에서 Connect/Disconnect
-        DMD를 누르면) 호출되어 여기 표시만 갱신함 - 연결 자체는 여기서
-        하지 않음."""
-        connected = dmd_uv_state.is_connected()
+        """dmd_uv_state가 바뀔 때마다(이 탭의 Connect에서 바뀌었든,
+        Synthesis 탭에서 바뀌었든) 호출되어 여기 표시만 갱신함."""
+        dmd_ok = dmd_uv_state.is_dmd_connected()
+        uv_ok = dmd_uv_state.is_uv_connected()
         self.dmd_uv_status_label.configure(
-            text=f"DMD/UV: {'Connected' if connected else 'Not connected'} "
-                 f"(connect from the Synthesis tab)"
+            text=f"DMD: {'Connected' if dmd_ok else 'Not connected'}  |  "
+                 f"UV: {'Connected' if uv_ok else 'Not connected'}"
         )
 
     def _build_valve_section(self, parent):
@@ -226,12 +226,27 @@ class ManualControlTab:
             ctx = SynthesisContext(valve=controller.valve, pumps=controller.pumps,
                                     valve_ports=cfg.VALVE_PORTS, uv=None, dmd=None)
             failed_pumps, valve_ok = controller.unavailable, controller.valve is not None
-        self.root.after(0, self._on_connected, ctx, failed_pumps, valve_ok)
 
-    def _on_connected(self, ctx, failed_pumps, valve_ok):
+        # DMD/UV도 Connect 한 번에 같이 연결 - 이미 연결돼 있으면(예:
+        # Synthesis 탭에서 먼저 연결해둔 경우) 다시 연결을 시도하지 않고
+        # 그 상태를 그대로 씀
+        if dmd_uv_state.is_dmd_connected() or dmd_uv_state.is_uv_connected():
+            dmd_ok, uv_ok, dmd_uv_messages = dmd_uv_state.is_dmd_connected(), dmd_uv_state.is_uv_connected(), []
+        else:
+            # notify_listeners=False - 이 코드는 백그라운드 스레드에서 도는
+            # 중이라, 리스너(tkinter 위젯을 건드림)를 여기서 바로 깨우면
+            # "main thread is not in main loop" 오류가 남. 메인 스레드로
+            # 돌아온 뒤(_on_connected) 거기서 notify()를 직접 부름.
+            dmd_ok, uv_ok, dmd_uv_messages = dmd_uv_state.connect(use_mock, notify_listeners=False)
+
+        self.root.after(0, self._on_connected, ctx, failed_pumps, valve_ok, dmd_ok, uv_ok, dmd_uv_messages)
+
+    def _on_connected(self, ctx, failed_pumps, valve_ok, dmd_ok, uv_ok, dmd_uv_messages):
         self.connecting = False
+        # 지금은(root.after로 돌아왔으므로) 메인 스레드라 리스너를 깨워도 안전함
+        dmd_uv_state.notify()
 
-        if not ctx.pumps and not valve_ok:
+        if not ctx.pumps and not valve_ok and not dmd_ok and not uv_ok:
             # 아무 장비도 실제로 안 붙었으면 "Connected"라고 하면 안 됨
             self.conn_status_label.configure(text="Connection failed - no devices responded")
             self.connect_button.configure(state="normal")
@@ -240,13 +255,20 @@ class ManualControlTab:
 
         self.ctx = ctx
         self.disconnect_button.configure(state="normal")
-        if failed_pumps or not valve_ok:
-            problems = []
-            if not valve_ok:
-                problems.append("valve")
-            if failed_pumps:
-                problems.append(f"pumps: {', '.join(failed_pumps)}")
-            self.conn_status_label.configure(text=f"Connected (failed: {'; '.join(problems)})")
+
+        problems = []
+        if not valve_ok:
+            problems.append("valve")
+        if failed_pumps:
+            problems.append(f"pumps: {', '.join(failed_pumps)}")
+        if not dmd_ok:
+            problems.append("DMD")
+        if not uv_ok:
+            problems.append("UV")
+
+        if problems:
+            detail = f" ({'; '.join(dmd_uv_messages)})" if dmd_uv_messages else ""
+            self.conn_status_label.configure(text=f"Connected (failed: {', '.join(problems)}){detail}")
         else:
             self.conn_status_label.configure(text="Connected")
         self.set_status("IDLE")
@@ -255,6 +277,7 @@ class ManualControlTab:
             btn.configure(state="normal" if valve_ok else "disabled")
         self.dispense_button.configure(state="normal")
         self.pump_stop_button.configure(state="normal")
+
     def _on_disconnect(self):
         if self.ctx is None:
             return
@@ -263,6 +286,9 @@ class ManualControlTab:
         for pump in self.ctx.pumps.values():
             pump.close()
         self.ctx = None
+
+        if dmd_uv_state.is_dmd_connected() or dmd_uv_state.is_uv_connected():
+            dmd_uv_state.disconnect()
 
         self.connect_button.configure(state="normal")
         self.disconnect_button.configure(state="disabled")

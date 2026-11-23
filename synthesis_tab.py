@@ -264,9 +264,9 @@ class SynthesisTab:
         # 없을 때 행 높이가 바뀜) 전체 레이아웃이 들썩였음. 그래서 항상 같은
         # 자리에 grid해두고, Column 모드에선 비활성화만 시켜서 자리는
         # 그대로 차지하되 누를 수만 없게 함 - 레이아웃 폭/높이가 고정됨.
-        self.dmd_connect_button = ttk.Button(top, text="Connect DMD", command=self._on_toggle_dmd)
+        self.dmd_connect_button = ttk.Button(top, text="Connect DMD/UV", command=self._on_toggle_dmd)
         self.dmd_connect_button.grid(row=0, column=4, sticky="w", padx=(10, 5))
-        self.dmd_status_label = ttk.Label(top, text="DMD: No DMD")
+        self.dmd_status_label = ttk.Label(top, text="DMD: No DMD  |  UV: No UV")
         self.dmd_status_label.grid(row=0, column=5, sticky="w")
 
         # 실행 상태 바 - 파일 입력 + Play/Pause/Stop + Reagent Volume/Prime +
@@ -1030,29 +1030,36 @@ class SynthesisTab:
 
     def _refresh_dmd_status(self):
         """DMD/UV 연결 상태 표시 갱신 - dmd_uv_state가 바뀔 때마다(이 탭에서
-        토글했든, Manual Control 탭에서 토글했든) 호출됨."""
-        connected = dmd_uv_state.is_connected()
+        토글했든, Manual Control 탭에서 토글했든) 호출됨. 실기에서는 UV만
+        연결되고 DMD는 안 될 수 있어서(실제 DMD 드라이버가 아직 없음)
+        둘을 따로 보여줌."""
+        dmd_ok = dmd_uv_state.is_dmd_connected()
+        uv_ok = dmd_uv_state.is_uv_connected()
         if self.mode_var.get() == COLUMN:
             self.dmd_status_label.configure(text="DMD: N/A (Column mode)")
         else:
-            self.dmd_status_label.configure(text="DMD: Connected" if connected else "DMD: No DMD")
-        self.dmd_connect_button.configure(text="Disconnect DMD" if connected else "Connect DMD")
+            self.dmd_status_label.configure(
+                text=f"DMD: {'Connected' if dmd_ok else 'No DMD'}  |  "
+                     f"UV: {'Connected' if uv_ok else 'No UV'}"
+            )
+        self.dmd_connect_button.configure(
+            text="Disconnect DMD/UV" if (dmd_ok or uv_ok) else "Connect DMD/UV"
+        )
 
     def _on_simulate_change(self):
         self.set_mode("SIMULATION" if self.simulate_var.get() else "REAL HARDWARE")
 
     def _on_toggle_dmd(self):
-        if dmd_uv_state.is_connected():
+        if dmd_uv_state.is_dmd_connected() or dmd_uv_state.is_uv_connected():
             dmd_uv_state.disconnect()
             return
 
-        if not self.simulate_var.get():
-            # 실제 DMD/UV 드라이버는 아직 연동되지 않았으므로, 있는 것처럼
-            # 꾸미지 않고 솔직하게 안내만 함
-            self._log("[DMD] Real DMD/UV driver is not wired up yet - only Simulation Mode is supported.")
-            return
-
-        dmd_uv_state.connect_mock()
+        # Simulation Mode면 둘 다 Mock으로, 꺼져 있으면 UV는 실제로 연결을
+        # 시도하고 DMD는 아직 실제 드라이버가 없어 솔직하게 미지원으로 남음
+        # (dmd_uv_state.connect 참고 - Manual Control의 Connect와 같은 경로)
+        _, _, messages = dmd_uv_state.connect(self.simulate_var.get())
+        for msg in messages:
+            self._log(f"[DMD/UV] {msg}")
 
     # ---------------- logging ----------------
     def _log(self, msg):
