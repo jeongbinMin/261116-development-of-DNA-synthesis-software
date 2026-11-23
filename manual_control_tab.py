@@ -70,9 +70,16 @@ class ManualControlTab:
         body.pack(fill="both", expand=True)
 
         self._build_valve_section(body)
-        self._build_pump_section(body)
+
+        # Individual Syringe Pump(분주)와 Pump Display Name(이름 수정)을
+        # 같은 펌프를 다루는 한 쌍이라 2열로 나란히 배치 - 세로로 쌓으면
+        # 화면을 너무 많이 차지해서 한 줄에 같이 보이는 게 더 보기 좋음
+        pump_row = ttk.Frame(body)
+        pump_row.pack(fill="x", pady=(0, 10))
+        self._build_pump_section(pump_row)
+        self._build_display_name_section(pump_row)
+
         self._build_uv_section(body)
-        self._build_display_name_section(body)
 
     def _refresh_dmd_status(self):
         """dmd_uv_state가 바뀔 때마다(이 탭의 Connect에서 바뀌었든,
@@ -114,8 +121,9 @@ class ManualControlTab:
     def _build_pump_section(self, parent):
         # "Individual Syringe Pump" 박스에는 펌프 선택 + 분주 기능만 둠
         # (Display Name 수정은 별도 박스로 분리 - _build_display_name_section).
+        # parent(pump_row)에서 Pump Display Name 박스와 나란히(2열) 놓임
         frame = ttk.LabelFrame(parent, text="Individual Syringe Pump", padding=10)
-        frame.pack(fill="x", pady=(0, 10))
+        frame.pack(side="left", fill="both", expand=True, padx=(0, 5))
 
         # 예전엔 줄마다 따로 ttk.Frame + pack(side="left")을 썼는데, 라벨
         # 폭을 줄마다 다르게 줘서 행마다 입력칸이 시작하는 x 위치가
@@ -255,7 +263,7 @@ class ManualControlTab:
         self.pump_var를 그대로 공유해서, 거기서 고른 펌프의 이름을 여기서
         바꿈(펌프 선택 UI를 두 번 만들지 않음)."""
         frame = ttk.LabelFrame(parent, text="Pump Display Name", padding=10)
-        frame.pack(fill="x")
+        frame.pack(side="left", fill="both", expand=True, padx=(5, 0))
 
         self.display_names = load_display_names()
 
