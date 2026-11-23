@@ -34,7 +34,8 @@ VALVE_ACTIVE_COLOR = "#333333"
 # ---- Fluidic Path 유동 애니메이션(Moving Dashed Line) 설정 ----
 # 활성(실제로 용액이 흐르는) 배관의 점선 색상 - 비활성 배관은 원래 색
 # (아래 _build_fluidic_path에서 만들 때 쓰는 색, 예: "#404040")을 그대로 둠
-FLOW_ACTIVE_LINE_COLOR = "#0891b2"   # 청록색 계열
+FLOW_ACTIVE_LINE_COLOR = "#00b8d4"   # 청록색 계열 - 펌프 박스의 진한 강조색(VALVE_ACTIVE_COLOR)
+                                     # 옆에서도 묻히지 않도록 좀 더 밝고 채도 높은 톤으로 사용
 # 점선 간격 - 패턴이 너무 촘촘하면(예전 6,4) 한 프레임 이동량(몇 px)이
 # 패턴 주기(10px)에 비해 작아서 가만히 있는 것처럼 보이기 쉬움. 한 칸을
 # 더 크게 둬서(주기 20px) 같은 속도로도 "확실히 움직인다"는 느낌이 들게 함
@@ -730,6 +731,12 @@ class SynthesisTab:
         self.pump_lines = {}      # name -> 연결선 캔버스 id (디버깅/참조용)
         self.pump_paths = {}      # name -> 흐름 애니메이션용 경로 좌표 리스트
         self.flow_item_defaults = {}  # 캔버스 line id -> (원래 fill, 원래 dash)
+        # 바늘(needle)도 흐르는 동안은 점선+활성색으로 바꿔서, 펌프->밸브
+        # 배관 - 밸브 내부(바늘) - 밸브->Flow Cell 배관이 끊기지 않고 하나로
+        # 이어진 흐름처럼 보이게 함. 원래는 항상 굵은 검정 실선으로 고정돼
+        # 있어서, 그 부분만 애니메이션이 안 걸려 흐름이 중간에 끊겨 보이고
+        # 전체적으로 "안 움직이는 것처럼" 느껴졌었음.
+        self.flow_item_defaults[self.rv_needle] = ("#1a1a1a", ())
         for i in range(n):
             port_number = i + 1
             name = port_to_name.get(port_number)
@@ -880,13 +887,16 @@ class SynthesisTab:
             self.fluidic_canvas.coords(self.rv_needle, cx, cy, px, py)
             self.fluidic_canvas.tag_raise(self.rv_needle)
 
-        # 실제로 흐르는 구간: 해당 포트의 공급 배관 + 밸브->Flow Cell 공용
-        # 배관. 그 외(다른 포트, Flow Cell->Waste 등)는 건드리지 않음 -
-        # "여러 배관 중 실제 용액이 이동하는 경로에만 애니메이션 적용".
+        # 실제로 흐르는 구간: 해당 포트의 공급 배관 + 밸브 내부(바늘) +
+        # 밸브->Flow Cell 공용 배관. 바늘까지 포함해야 펌프->밸브->Flow
+        # Cell이 끊김 없이 하나로 이어진 흐름처럼 보임. 그 외(다른 포트,
+        # Flow Cell->Waste 등)는 건드리지 않음 - "여러 배관 중 실제
+        # 용액이 이동하는 경로에만 애니메이션 적용".
         self.active_flow_items = []
         pump_line_id = self.pump_lines.get(function_name)
         if pump_line_id is not None:
             self.active_flow_items.append(pump_line_id)
+        self.active_flow_items.append(self.rv_needle)
         self.active_flow_items.append(self.rv_to_fc_line)
 
         if not self.flow_animation_enabled:
