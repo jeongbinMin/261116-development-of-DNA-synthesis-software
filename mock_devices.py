@@ -88,14 +88,24 @@ class MockUVSource:
 class MockDMD:
     def __init__(self):
         self.current_image = None
+        # 실제 DMDSource(dmd_source.py)와 속성 이름/의미를 맞춰서, Manual
+        # Control의 "Current State" 표시 코드가 Mock/실기 구분 없이
+        # 똑같이 동작하게 함
+        self.current = "OFF (all mirrors off)"
 
     def display_image(self, path: str):
         self.current_image = path
+        self.current = f"showing image: {path.split('/')[-1].split(chr(92))[-1]}"
         print(f"  [MockDMD] 이미지 표시: {path}")
+
+    def show_test_pattern(self, kind: str):
+        self.current = f"showing test pattern: {kind}"
+        print(f"  [MockDMD] 테스트 패턴 표시: {kind}")
 
     def clear(self):
         print("  [MockDMD] 화면 끄기")
         self.current_image = None
+        self.current = "OFF (all mirrors off)"
 
     def close(self):
         print("  [MockDMD] 연결 종료")

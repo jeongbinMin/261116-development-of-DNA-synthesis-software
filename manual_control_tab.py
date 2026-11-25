@@ -94,8 +94,9 @@ class ManualControlTab:
         )
         if hasattr(self, "dmd_display_button"):
             dmd_state = "normal" if dmd_ok else "disabled"
-            for btn in (self.dmd_display_button, self.dmd_clear_button):
+            for btn in (self.dmd_display_button, self.dmd_reset_button, *self.dmd_pattern_buttons):
                 btn.configure(state=dmd_state)
+            self._refresh_dmd_state_label()
         if hasattr(self, "uv_set_button"):
             uv_state = "normal" if uv_ok else "disabled"
             for btn in (self.uv_set_button, self.uv_on_button, self.uv_off_button,
@@ -176,12 +177,32 @@ class ManualControlTab:
         self.pump_status_label.pack(anchor="w", pady=(5, 0))
 
     def _build_dmd_section(self, parent):
-        """DMD(TI DLP Discovery 4100) 직접 조작 - BMP 한 장 띄우기, 전부
-        끄기(Clear). UV와 마찬가지로 별도 Connect 없이 공용 연결 상태
-        (dmd_uv_state)를 그대로 쓰고, 연결 안 됐으면 버튼이 비활성 상태로
-        있음(_refresh_dmd_status가 관리)."""
+        """DMD(TI DLP Discovery 4100) 직접 조작 - 내장 검증 패턴으로
+        빠르게 테스트, BMP 한 장 띄우기, 전부 끄기(Reset). UV와 마찬가지로
+        별도 Connect 없이 공용 연결 상태(dmd_uv_state)를 그대로 쓰고,
+        연결 안 됐으면 버튼이 비활성 상태로 있음(_refresh_dmd_status가 관리).
+
+        안전 참고: 연결 직후 거울이 꺼져 있다는 보장이 하드웨어에 없어서
+        (dmd_source.py 참고 - 이전 세션의 마지막 이미지가 그대로 남아있을
+        수 있음), 연결하면 자동으로 한 번 꺼진 상태로 맞춰짐. "Current
+        State" 표시로 지금 거울이 꺼져 있는지/뭘 띄우고 있는지 항상 바로
+        확인할 수 있게 함."""
         frame = ttk.LabelFrame(parent, text="DMD (TI DLP Discovery 4100)", padding=10)
         frame.pack(fill="x", pady=(0, 10))
+
+        # 저장된 패턴 몇 개로 빠르게 "잘 나오는지" 확인하는 용도.
+        # text는 T/E/S처럼 좌우 비대칭 글자라, 화면이 뒤집히거나 미러링되는
+        # 버그가 있으면 바로 눈에 띄도록 일부러 고른 패턴.
+        ttk.Label(frame, text="Test Patterns:").pack(anchor="w")
+        pattern_row = ttk.Frame(frame)
+        pattern_row.pack(fill="x", pady=(2, 8))
+        self.dmd_pattern_buttons = []
+        for kind, label in (("on", "All ON"), ("off", "All OFF"),
+                             ("half", "Half"), ("text", "Text (TEST)")):
+            btn = ttk.Button(pattern_row, text=label,
+                              command=lambda k=kind: self._on_dmd_test_pattern(k), state="disabled")
+            btn.pack(side="left", padx=(0, 5))
+            self.dmd_pattern_buttons.append(btn)
 
         grid = ttk.Frame(frame)
         grid.pack(fill="x")
@@ -199,17 +220,32 @@ class ManualControlTab:
         self.dmd_display_button = ttk.Button(btn_row, text="Display Image",
                                               command=self._on_dmd_display, state="disabled")
         self.dmd_display_button.pack(side="left")
-        self.dmd_clear_button = ttk.Button(btn_row, text="Clear", command=self._on_dmd_clear,
-                                            state="disabled")
-        self.dmd_clear_button.pack(side="left", padx=5)
+        # "Clear"가 아니라 "Reset"으로 - 거울을 전부 끄는 안전 동작이라는
+        # 의미를 분명히 하기 위함(평소 상태가 꺼져있다는 보장이 없어서 중요함)
+        self.dmd_reset_button = ttk.Button(btn_row, text="Reset (All Mirrors OFF)",
+                                           command=self._on_dmd_reset, state="disabled")
+        self.dmd_reset_button.pack(side="left", padx=5)
 
+        self.dmd_state_var = tk.StringVar(value="Current State: unknown (not connected)")
+        ttk.Label(frame, textvariable=self.dmd_state_var,
+                  font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(8, 0))
         self.dmd_action_status_label = ttk.Label(frame, text="")
-        self.dmd_action_status_label.pack(anchor="w", pady=(5, 0))
+        self.dmd_action_status_label.pack(anchor="w", pady=(2, 0))
 
     def _on_dmd_browse(self):
         path = filedialog.askopenfilename(filetypes=[("Bitmap", "*.bmp"), ("All files", "*.*")])
         if path:
             self.dmd_bmp_path_var.set(path)
+
+    def _refresh_dmd_state_label(self):
+        """dmd_uv_state.dmd.current(Mock/실기 둘 다 같은 속성 이름)를
+        읽어서 "Current State" 표시만 갱신 - 매 동작 뒤, 그리고 Connect
+        직후에 호출됨."""
+        dmd = dmd_uv_state.dmd
+        if dmd is None:
+            self.dmd_state_var.set("Current State: unknown (not connected)")
+            return
+        self.dmd_state_var.set(f"Current State: {getattr(dmd, 'current', 'unknown')}")
 
     def _on_dmd_display(self):
         dmd = dmd_uv_state.dmd
@@ -227,29 +263,50 @@ class ManualControlTab:
     def _dmd_display_worker(self, dmd, path):
         try:
             dmd.display_image(path)
-            self.root.after(0, lambda: self.dmd_action_status_label.configure(text=f"Displayed: {path}"))
+            self.root.after(0, self._on_dmd_action_done, f"Displayed: {path}")
         except Exception as e:
             # except 블록이 끝나면 파이썬이 e를 자동으로 지워버리므로(암묵적
-            # del e), root.after로 나중에 실행되는 람다가 e를 그대로
+            # del e), root.after로 나중에 실행되는 코드가 e를 그대로
             # 참조하면 그 시점엔 이미 없는 변수라 에러가 남 - 메시지를
             # 문자열로 먼저 뽑아서 그 문자열만 클로저로 넘김
             msg = str(e)
-            self.root.after(0, lambda: self.dmd_action_status_label.configure(text=f"Display failed: {msg}"))
+            self.root.after(0, self._on_dmd_action_done, f"Display failed: {msg}")
 
-    def _on_dmd_clear(self):
+    def _on_dmd_test_pattern(self, kind):
         dmd = dmd_uv_state.dmd
         if dmd is None:
             return
-        self.dmd_action_status_label.configure(text="Clearing...")
-        threading.Thread(target=self._dmd_clear_worker, args=(dmd,), daemon=True).start()
+        self.dmd_action_status_label.configure(text=f"Showing test pattern '{kind}' ...")
+        threading.Thread(target=self._dmd_test_pattern_worker, args=(dmd, kind), daemon=True).start()
 
-    def _dmd_clear_worker(self, dmd):
+    def _dmd_test_pattern_worker(self, dmd, kind):
         try:
-            dmd.clear()
-            self.root.after(0, lambda: self.dmd_action_status_label.configure(text="Cleared."))
+            dmd.show_test_pattern(kind)
+            self.root.after(0, self._on_dmd_action_done, f"Showing test pattern: {kind}")
         except Exception as e:
             msg = str(e)
-            self.root.after(0, lambda: self.dmd_action_status_label.configure(text=f"Clear failed: {msg}"))
+            self.root.after(0, self._on_dmd_action_done, f"Test pattern '{kind}' failed: {msg}")
+
+    def _on_dmd_reset(self):
+        dmd = dmd_uv_state.dmd
+        if dmd is None:
+            return
+        self.dmd_action_status_label.configure(text="Resetting (turning all mirrors off)...")
+        threading.Thread(target=self._dmd_reset_worker, args=(dmd,), daemon=True).start()
+
+    def _dmd_reset_worker(self, dmd):
+        try:
+            dmd.clear()
+            self.root.after(0, self._on_dmd_action_done, "Reset complete - all mirrors off.")
+        except Exception as e:
+            msg = str(e)
+            self.root.after(0, self._on_dmd_action_done, f"Reset failed: {msg}")
+
+    def _on_dmd_action_done(self, status_text):
+        """DMD 동작(이미지 표시/테스트 패턴/리셋) 후 공통으로 호출 - 상태
+        메시지와 "Current State" 표시를 같이 갱신함."""
+        self.dmd_action_status_label.configure(text=status_text)
+        self._refresh_dmd_state_label()
 
     def _build_uv_section(self, parent):
         """UV LED 드라이버(Thorlabs DC40) 직접 조작 - 전류 설정, ON/OFF,

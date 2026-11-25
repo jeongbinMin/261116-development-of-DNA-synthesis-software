@@ -65,11 +65,25 @@ def _run(args, timeout=60):
     return output
 
 
+# dmd_display.py의 test_payload()가 지원하는 내장 검증 패턴. "text"는
+# T/E/S처럼 좌우 비대칭 글자라 화면이 뒤집히거나 미러링되는 버그가 있으면
+# 바로 눈에 띄도록 일부러 고른 패턴(원본 스크립트 주석 참고).
+TEST_PATTERNS = ("on", "off", "half", "text")
+
+
 class DMDSource:
     """MockDMD와 같은 모양(display_image/clear/close)의 실제 DMD 제어.
     연결을 계속 들고 있는 게 아니라, 호출마다 32비트 서브프로세스를 새로
     띄움 - D4100_usb.dll의 로우레벨 API 자체가 장치 번호로 매번 다시
-    참조하는 구조라, 프로세스 간에 "연결 상태"를 유지할 필요가 없음."""
+    참조하는 구조라, 프로세스 간에 "연결 상태"를 유지할 필요가 없음.
+
+    안전 참고(사용자 요청으로 확인함): dmd_display.py의 ready()/--info는
+    DMD 타입을 읽기만 할 뿐, 마이크로미러 내용을 바꾸는 호출을 전혀 안 함.
+    즉 "연결했을 때 거울이 꺼져 있다"는 보장이 하드웨어/드라이버 어디에도
+    없고, 이전 세션에서 마지막으로 띄워놨던 이미지가 그대로 남아있을 수
+    있음(DMD 보드 자체는 USB가 뽑혀도 전원이 남아있으면 마지막 프레임을
+    계속 띄우고 있을 수 있는 구조). 그래서 연결 직후 자동으로 clear()를
+    한 번 호출해서, 항상 "꺼진 상태"로 시작하도록 강제함."""
 
     def __init__(self):
         # 생성 시점에 한 번 --info로 실제로 장치가 보이는지 확인 - 여기서
@@ -77,15 +91,27 @@ class DMDSource:
         # dmd_uv_state.connect()가 솔직하게 "DMD: connection failed - ..."로
         # 처리하게 함
         _run(["--info"])
+        # 위 안전 참고 - 연결 직후 거울 상태가 불확실하므로 항상 꺼서 시작
+        self.clear()
 
     def display_image(self, path: str):
         """BMP 한 장을 DMD에 그대로 띄움 - 크기가 DMD 해상도와 정확히
         같아야 함(다르면 dmd_display.py가 리사이즈하지 않고 에러를 냄)."""
         _run([path])
+        self.current = f"showing image: {os.path.basename(path)}"
+
+    def show_test_pattern(self, kind: str):
+        """내장 검증 패턴(on/off/half/text) 중 하나를 띄움 - 실제 마스크
+        파일 없이도 DMD가 제대로 반응하는지 빠르게 확인하는 용도."""
+        if kind not in TEST_PATTERNS:
+            raise ValueError(f"unknown test pattern: {kind} (choices: {TEST_PATTERNS})")
+        _run(["--test", kind])
+        self.current = f"showing test pattern: {kind}"
 
     def clear(self):
-        """모든 마이크로미러를 꺼서 화면을 검게 만듦."""
+        """모든 마이크로미러를 꺼서 화면을 검게 만듦(Reset)."""
         _run(["--test", "off"])
+        self.current = "OFF (all mirrors off)"
 
     def close(self):
         # 서브프로세스 방식이라 유지되는 연결 자체가 없음 - 할 일 없음
